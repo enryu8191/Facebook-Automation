@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Grok Video Generator</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="logo">G▶</div>
+    <div class="header-text">
+      <span class="header-title">Grok Video Series</span>
+      <span class="header-sub">AI Short Video Generator</span>
+    </div>
+    <button class="icon-btn" id="settingsBtn" title="Settings">⚙</button>
+  </header>
+
+  <!-- Step Indicator -->
+  <div class="steps" id="stepIndicator">
+    <div class="step active" data-step="1">
+      <div class="step-dot">1</div>
+      <span>Topic</span>
+    </div>
+    <div class="step-line"></div>
+    <div class="step" data-step="2">
+      <div class="step-dot">2</div>
+      <span>Style</span>
+    </div>
+    <div class="step-line"></div>
+    <div class="step" data-step="3">
+      <div class="step-dot">3</div>
+      <span>Generate</span>
+    </div>
+    <div class="step-line"></div>
+    <div class="step" data-step="4">
+      <div class="step-dot">4</div>
+      <span>Export</span>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <main class="main">
+
+    <!-- Step 1: Topic Input -->
+    <div class="panel" id="panel-1">
+      <h2 class="panel-title">What's your video series about?</h2>
+      <p class="panel-desc">Describe your topic and Grok will generate a complete video series script.</p>
+
+      <div class="form-group">
+        <label>Topic / Idea</label>
+        <textarea id="topicInput" placeholder="e.g. &quot;5 science facts that will blow your mind&quot; or &quot;how to build a morning routine&quot;" rows="3"></textarea>
+        <span class="char-count"><span id="charCount">0</span>/300</span>
+      </div>
+
+      <div class="form-group">
+        <label>Target Audience</label>
+        <input type="text" id="audienceInput" placeholder="e.g. college students, entrepreneurs, fitness lovers" />
+      </div>
+
+      <div class="form-group">
+        <label>Number of Videos</label>
+        <div class="range-row">
+          <input type="range" id="videoCount" min="3" max="15" value="5" />
+          <span class="range-val" id="videoCountVal">5 videos</span>
+        </div>
+      </div>
+
+      <div class="quick-ideas">
+        <p class="hint-label">Quick ideas:</p>
+        <div class="chips" id="quickIdeas">
+          <button class="chip">🧠 Life hacks</button>
+          <button class="chip">💡 Science facts</button>
+          <button class="chip">💪 Fitness tips</button>
+          <button class="chip">📈 Business advice</button>
+          <button class="chip">🌍 Travel spots</button>
+          <button class="chip">🍳 Cooking tricks</button>
+          <button class="chip">📚 Book summaries</button>
+          <button class="chip">🤖 AI tools</button>
+        </div>
+      </div>
+
+      <div class="panel-footer">
+        <button class="btn btn-primary full-width" id="step1Next" disabled>Next: Choose Style →</button>
+      </div>
+    </div>
+
+    <!-- Step 2: Style Configuration -->
+    <div class="panel hidden" id="panel-2">
+      <h2 class="panel-title">Customize your video style</h2>
+      <p class="panel-desc">Configure how your videos will look and sound.</p>
+
+      <div class="form-group">
+        <label>Video Style</label>
+        <div class="toggle-group" id="videoStyle">
+          <button class="toggle-btn active" data-val="educational">📚 Educational</button>
+          <button class="toggle-btn" data-val="motivational">💪 Motivational</button>
+          <button class="toggle-btn" data-val="storytelling">📖 Story</button>
+          <button class="toggle-btn" data-val="tutorial">🛠 Tutorial</button>
+          <button class="toggle-btn" data-val="entertainment">🎭 Fun</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Video Duration</label>
+        <div class="toggle-group" id="videoDuration">
+          <button class="toggle-btn" data-val="15">15s</button>
+          <button class="toggle-btn active" data-val="30">30s</button>
+          <button class="toggle-btn" data-val="45">45s</button>
+          <button class="toggle-btn" data-val="60">60s</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Color Theme</label>
+        <div class="theme-grid" id="colorTheme">
+          <button class="theme-btn active" data-val="dark-purple">
+            <span class="theme-preview" style="background:linear-gradient(135deg,#1a0533,#2d1b69)"></span>
+            <span>Dark Purple</span>
+          </button>
+          <button class="theme-btn" data-val="dark-blue">
+            <span class="theme-preview" style="background:linear-gradient(135deg,#0d1b4b,#1e3a8a)"></span>
+            <span>Dark Blue</span>
+          </button>
+          <button class="theme-btn" data-val="sunset">
+            <span class="theme-preview" style="background:linear-gradient(135deg,#7c2d12,#c2410c,#db2777)"></span>
+            <span>Sunset</span>
+          </button>
+          <button class="theme-btn" data-val="forest">
+            <span class="theme-preview" style="background:linear-gradient(135deg,#052e16,#14532d,#166534)"></span>
+            <span>Forest</span>
+          </button>
+          <button class="theme-btn" data-val="neon">
+            <span class="theme-preview" style="background:linear-gradient(135deg,#0a0a0a,#1a1a2e);border:1px solid #00ff88"></span>
+            <span>Neon</span>
+          </button>
+          <button class="theme-btn" data-val="minimal">
+            <span class="theme-preview" style="background:linear-gradient(135deg,#1e293b,#334155)"></span>
+            <span>Minimal</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Text Animation</label>
+        <div class="toggle-group" id="textAnimation">
+          <button class="toggle-btn active" data-val="fade">✨ Fade</button>
+          <button class="toggle-btn" data-val="slide">➡ Slide</button>
+          <button class="toggle-btn" data-val="typewriter">⌨ Typewriter</button>
+          <button class="toggle-btn" data-val="bounce">🔵 Bounce</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Include hashtags</label>
+        <div class="toggle-group" id="hashtagToggle">
+          <button class="toggle-btn active" data-val="yes">✓ Yes</button>
+          <button class="toggle-btn" data-val="no">✗ No</button>
+        </div>
+      </div>
+
+      <div class="panel-footer two-col">
+        <button class="btn btn-secondary" id="step2Back">← Back</button>
+        <button class="btn btn-primary" id="step2Next">Generate Scripts →</button>
+      </div>
+    </div>
+
+    <!-- Step 3: Generate -->
+    <div class="panel hidden" id="panel-3">
+      <h2 class="panel-title" id="generateTitle">Generating with Grok...</h2>
+      <p class="panel-desc" id="generateDesc">Grok is crafting your video scripts. This takes a few seconds.</p>
+
+      <!-- Progress -->
+      <div class="generate-progress" id="generateProgress">
+        <div class="progress-bar-wrap">
+          <div class="progress-bar" id="progressBar"></div>
+        </div>
+        <div class="progress-steps" id="progressSteps">
+          <div class="progress-step active" id="ps-script">
+            <span class="ps-icon">📝</span>
+            <span class="ps-text">Generating scripts...</span>
+          </div>
+          <div class="progress-step" id="ps-render">
+            <span class="ps-icon">🎬</span>
+            <span class="ps-text">Rendering videos...</span>
+          </div>
+          <div class="progress-step" id="ps-done">
+            <span class="ps-icon">✅</span>
+            <span class="ps-text">Finalizing...</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Video List (populated after generation) -->
+      <div class="video-list hidden" id="videoList"></div>
+
+      <!-- Error State -->
+      <div class="error-state hidden" id="errorState">
+        <span class="error-icon">⚠️</span>
+        <p id="errorMsg"></p>
+        <button class="btn btn-secondary" id="retryBtn">Try Again</button>
+      </div>
+
+      <div class="panel-footer two-col" id="step3Footer" style="display:none">
+        <button class="btn btn-secondary" id="step3Back">← Back</button>
+        <button class="btn btn-primary" id="step3Next">Export Videos →</button>
+      </div>
+    </div>
+
+    <!-- Step 4: Export -->
+    <div class="panel hidden" id="panel-4">
+      <h2 class="panel-title">Export your videos</h2>
+      <p class="panel-desc">Download individual videos or bundle them all at once.</p>
+
+      <div class="export-summary" id="exportSummary"></div>
+
+      <div class="form-group">
+        <label>Export Options</label>
+        <div class="export-options">
+          <button class="export-opt" id="exportAll">
+            <span class="eo-icon">📦</span>
+            <div class="eo-text">
+              <strong>Download All</strong>
+              <span>Save all videos as a ZIP bundle</span>
+            </div>
+          </button>
+          <button class="export-opt" id="exportSelected">
+            <span class="eo-icon">🎯</span>
+            <div class="eo-text">
+              <strong>Download Selected</strong>
+              <span>Choose which videos to save</span>
+            </div>
+          </button>
+          <button class="export-opt" id="copyScripts">
+            <span class="eo-icon">📋</span>
+            <div class="eo-text">
+              <strong>Copy Scripts</strong>
+              <span>Copy all scripts to clipboard</span>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <div class="export-video-list" id="exportVideoList"></div>
+
+      <div class="panel-footer two-col">
+        <button class="btn btn-secondary" id="step4Back">← Back</button>
+        <button class="btn btn-primary" id="newSeriesBtn">+ New Series</button>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- No API key banner -->
+  <div class="no-api-banner hidden" id="noApiBanner">
+    <span>⚠️ No API key set.</span>
+    <button class="banner-link" id="openSettings">Configure →</button>
+  </div>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>
