@@ -1,488 +1,493 @@
 /**
- * Canvas-based video renderer
- * Generates animated short-form videos from script data using
- * the Canvas 2D API and MediaRecorder for export.
+ * Image-based video renderer
+ *
+ * Takes an array of scenes (each with a Grok Imagine data URL) and
+ * renders them into an animated WebM video using:
+ *  - Ken Burns effect (slow pan + zoom) on each image
+ *  - Scene transitions (crossfade / slide / zoom / cut)
+ *  - Caption bar with typewriter or subtitle style
+ *  - Hook title card at the start
+ *  - Outro card at the end
+ *  - MediaRecorder for export
  */
 
-/** Canvas dimensions per aspect ratio */
-const DIMENSIONS = {
-  '9:16': { width: 540, height: 960 },
-  '1:1':  { width: 720, height: 720 },
-  '16:9': { width: 960, height: 540 },
-};
+// ─────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────
 
-/** Quality settings: bitrate (bps) */
-const QUALITY_BITRATE = {
-  high:   4_000_000,
-  medium: 2_000_000,
-  low:    800_000,
-};
+const CANVAS_W = 540;
+const CANVAS_H = 960;   // 9:16 vertical (TikTok / Reels)
+const FPS = 30;
 
-/** Color themes: [bg gradient stops, accent, text] */
-const THEMES = {
-  'dark-purple': {
-    bg: ['#0d001a', '#1a0533', '#2d1b69'],
-    accent: '#a855f7',
-    accentGlow: 'rgba(168, 85, 247, 0.4)',
-    text: '#f5f3ff',
-    sub: '#c4b5fd',
-  },
-  'dark-blue': {
-    bg: ['#030712', '#0d1b4b', '#1e3a8a'],
-    accent: '#3b82f6',
-    accentGlow: 'rgba(59, 130, 246, 0.4)',
-    text: '#eff6ff',
-    sub: '#93c5fd',
-  },
-  sunset: {
-    bg: ['#1c0a00', '#7c2d12', '#9d174d'],
-    accent: '#f97316',
-    accentGlow: 'rgba(249, 115, 22, 0.4)',
-    text: '#fff7ed',
-    sub: '#fdba74',
-  },
-  forest: {
-    bg: ['#001a0a', '#052e16', '#14532d'],
-    accent: '#22c55e',
-    accentGlow: 'rgba(34, 197, 94, 0.4)',
-    text: '#f0fdf4',
-    sub: '#86efac',
-  },
-  neon: {
-    bg: ['#000000', '#0a0a0a', '#0d0d14'],
-    accent: '#00ff88',
-    accentGlow: 'rgba(0, 255, 136, 0.4)',
-    text: '#ffffff',
-    sub: '#00ff88',
-  },
-  minimal: {
-    bg: ['#0f172a', '#1e293b', '#334155'],
-    accent: '#94a3b8',
-    accentGlow: 'rgba(148, 163, 184, 0.3)',
-    text: '#f8fafc',
-    sub: '#cbd5e1',
-  },
-};
+const QUALITY_BITRATE = { high: 4_000_000, medium: 2_000_000, low: 900_000 };
 
-/**
- * Wrap text to fit within a max width
- * @returns {string[]} Array of lines
- */
-function wrapText(ctx, text, maxWidth) {
+const FALLBACK_GRADIENTS = [
+  ['#0d001a', '#2d1b69'],
+  ['#030712', '#1e3a8a'],
+  ['#1c0a00', '#9d174d'],
+  ['#001a0a', '#14532d'],
+  ['#0a0a0a', '#1a1a2e'],
+];
+
+// ─────────────────────────────────────────────────────
+// Utility
+// ─────────────────────────────────────────────────────
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    if (!src) return resolve(null);
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload  = () => resolve(img);
+    img.onerror = () => resolve(null); // silently fall back
+    img.src = src;
+  });
+}
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+function easeInOut(t)   { return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; }
+
+function wrapText(ctx, text, maxW) {
   const words = text.split(' ');
   const lines = [];
-  let current = '';
-
-  for (const word of words) {
-    const test = current ? `${current} ${word}` : word;
-    if (ctx.measureText(test).width > maxWidth && current) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = test;
-    }
+  let cur = '';
+  for (const w of words) {
+    const test = cur ? `${cur} ${w}` : w;
+    if (ctx.measureText(test).width > maxW && cur) { lines.push(cur); cur = w; }
+    else cur = test;
   }
-  if (current) lines.push(current);
+  if (cur) lines.push(cur);
   return lines;
 }
 
-/**
- * Draw a rounded rectangle
- */
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, r);
+// ─────────────────────────────────────────────────────
+// Drawing helpers
+// ─────────────────────────────────────────────────────
+
+/** Draw an image with Ken Burns (pan + zoom) effect. t = 0..1 */
+function drawKenBurns(ctx, img, t, sceneIndex) {
+  // Alternate between zoom-in and zoom-out, different pan directions
+  const isEven = sceneIndex % 2 === 0;
+  const scale  = isEven
+    ? lerp(1.0, 1.12, easeInOut(t))
+    : lerp(1.12, 1.0, easeInOut(t));
+
+  // Pan direction based on scene index
+  const panDirs = [
+    { x: 0,    y: -0.03 }, // up
+    { x: 0.03, y: 0     }, // right
+    { x: 0,    y: 0.03  }, // down
+    { x: -0.03, y: 0    }, // left
+  ];
+  const pan = panDirs[sceneIndex % panDirs.length];
+  const panX = lerp(0, pan.x, easeInOut(t));
+  const panY = lerp(0, pan.y, easeInOut(t));
+
+  // Fit image to canvas (cover)
+  const imgAspect    = img.naturalWidth / img.naturalHeight;
+  const canvasAspect = CANVAS_W / CANVAS_H;
+  let drawW, drawH;
+  if (imgAspect > canvasAspect) {
+    drawH = CANVAS_H * scale;
+    drawW = drawH * imgAspect;
+  } else {
+    drawW = CANVAS_W * scale;
+    drawH = drawW / imgAspect;
+  }
+
+  const x = (CANVAS_W - drawW) / 2 + panX * CANVAS_W;
+  const y = (CANVAS_H - drawH) / 2 + panY * CANVAS_H;
+
+  ctx.drawImage(img, x, y, drawW, drawH);
 }
 
-/**
- * Draw the animated background
- * @param {CanvasRenderingContext2D} ctx
- * @param {number} w width
- * @param {number} h height
- * @param {Object} theme
- * @param {number} t time 0..1
- */
-function drawBackground(ctx, w, h, theme, t) {
-  // Static gradient base
-  const grad = ctx.createLinearGradient(0, 0, w * 0.3, h);
-  grad.addColorStop(0, theme.bg[0]);
-  grad.addColorStop(0.5, theme.bg[1]);
-  grad.addColorStop(1, theme.bg[2]);
+/** Draw a fallback gradient when no image is available */
+function drawFallbackGradient(ctx, sceneIndex) {
+  const [c1, c2] = FALLBACK_GRADIENTS[sceneIndex % FALLBACK_GRADIENTS.length];
+  const grad = ctx.createLinearGradient(0, 0, CANVAS_W * 0.4, CANVAS_H);
+  grad.addColorStop(0, c1);
+  grad.addColorStop(1, c2);
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, w, h);
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
-  // Animated radial glow
-  const glowX = w * (0.5 + 0.2 * Math.sin(t * Math.PI * 2));
-  const glowY = h * (0.4 + 0.1 * Math.cos(t * Math.PI * 2));
-  const glow = ctx.createRadialGradient(glowX, glowY, 0, glowX, glowY, w * 0.6);
-  glow.addColorStop(0, theme.accentGlow);
+  // Subtle animated radial glow
+  const cx = CANVAS_W * 0.5, cy = CANVAS_H * 0.35;
+  const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, CANVAS_W * 0.7);
+  glow.addColorStop(0, 'rgba(168,85,247,0.25)');
   glow.addColorStop(1, 'transparent');
   ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, w, h);
-
-  // Particle dots
-  ctx.fillStyle = `rgba(255,255,255,${0.03 + 0.02 * Math.sin(t * Math.PI)})`;
-  for (let i = 0; i < 20; i++) {
-    const px = ((i * 137.5 + t * 20) % w);
-    const py = ((i * 53.7 + t * 10) % h);
-    ctx.beginPath();
-    ctx.arc(px, py, 1.5, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 }
 
-/**
- * Draw the video number badge
- */
-function drawBadge(ctx, w, theme, videoNum, totalVideos) {
-  const text = `${videoNum}/${totalVideos}`;
-  ctx.font = 'bold 22px -apple-system, BlinkMacSystemFont, Arial, sans-serif';
-  const tw = ctx.measureText(text).width;
-  const bw = tw + 24;
-  const bh = 36;
-  const bx = w - bw - 20;
-  const by = 24;
+/** Dark gradient scrim over the bottom of the image for text readability */
+function drawScrim(ctx, intensity = 0.75) {
+  const grad = ctx.createLinearGradient(0, CANVAS_H * 0.45, 0, CANVAS_H);
+  grad.addColorStop(0, 'transparent');
+  grad.addColorStop(1, `rgba(0,0,0,${intensity})`);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
-  ctx.fillStyle = 'rgba(0,0,0,0.4)';
-  roundRect(ctx, bx, by, bw, bh, 8);
-  ctx.fill();
-
-  ctx.strokeStyle = theme.accent;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-
-  ctx.fillStyle = theme.sub;
-  ctx.textAlign = 'center';
-  ctx.fillText(text, bx + bw / 2, by + 25);
+  // Lighter top scrim for hook/title area
+  const topGrad = ctx.createLinearGradient(0, 0, 0, CANVAS_H * 0.25);
+  topGrad.addColorStop(0, 'rgba(0,0,0,0.55)');
+  topGrad.addColorStop(1, 'transparent');
+  ctx.fillStyle = topGrad;
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 }
 
-/**
- * Draw the hook text with animation
- * @param {number} alpha 0..1
- */
-function drawHook(ctx, w, h, theme, text, alpha, animation) {
-  const padding = w * 0.08;
-  const maxW = w - padding * 2;
-  const fontSize = Math.round(w * 0.07);
+/** Caption at the bottom of the screen */
+function drawCaption(ctx, text, style, alpha, t) {
+  if (!text || style === 'none') return;
 
   ctx.globalAlpha = alpha;
-  ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, Arial, sans-serif`;
-  ctx.textAlign = 'center';
+  const padX = 28;
+  const maxW  = CANVAS_W - padX * 2;
 
-  const lines = wrapText(ctx, text, maxW);
-  const lineH = fontSize * 1.3;
-  const totalH = lines.length * lineH;
-  let startY = h * 0.18;
+  if (style === 'bold_center') {
+    ctx.font      = `bold ${Math.round(CANVAS_W * 0.072)}px -apple-system, Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    const lines   = wrapText(ctx, text, maxW);
+    const lineH   = Math.round(CANVAS_W * 0.085);
+    const totalH  = lines.length * lineH;
+    const baseY   = CANVAS_H * 0.75 - totalH / 2;
 
-  // Draw text shadow / glow
-  ctx.shadowColor = theme.accentGlow;
-  ctx.shadowBlur = 20;
+    // Shadow
+    ctx.shadowColor = 'rgba(0,0,0,0.9)';
+    ctx.shadowBlur  = 12;
+    ctx.fillStyle   = '#ffffff';
+    lines.forEach((line, i) => ctx.fillText(line, CANVAS_W / 2, baseY + i * lineH));
+    ctx.shadowBlur  = 0;
 
-  lines.forEach((line, i) => {
-    let x = w / 2;
-    let y = startY + i * lineH;
+  } else if (style === 'typewriter') {
+    const chars = Math.floor(t * text.length);
+    const shown = text.slice(0, chars);
+    ctx.font      = `600 ${Math.round(CANVAS_W * 0.058)}px -apple-system, Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#f8f8f8';
+    ctx.shadowColor = 'rgba(0,0,0,0.9)'; ctx.shadowBlur = 10;
+    ctx.fillText(shown, CANVAS_W / 2, CANVAS_H * 0.82);
+    ctx.shadowBlur = 0;
 
-    if (animation === 'slide') {
-      x = w / 2 + (1 - alpha) * w * 0.3;
-    } else if (animation === 'bounce') {
-      y += Math.sin(alpha * Math.PI) * -10;
-    }
+  } else {
+    // subtitle bar (default)
+    ctx.font = `600 ${Math.round(CANVAS_W * 0.055)}px -apple-system, Arial, sans-serif`;
+    const lines  = wrapText(ctx, text, maxW);
+    const lineH  = Math.round(CANVAS_W * 0.065);
+    const barH   = lines.length * lineH + 20;
+    const barY   = CANVAS_H - barH - 24;
 
-    ctx.fillStyle = theme.text;
-    ctx.fillText(line, x, y);
-  });
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.beginPath();
+    ctx.roundRect(12, barY, CANVAS_W - 24, barH, 10);
+    ctx.fill();
 
-  ctx.shadowBlur = 0;
+    ctx.fillStyle   = '#ffffff';
+    ctx.textAlign   = 'center';
+    ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 6;
+    lines.forEach((line, i) => {
+      ctx.fillText(line, CANVAS_W / 2, barY + 16 + (i + 0.8) * lineH);
+    });
+    ctx.shadowBlur = 0;
+  }
+
   ctx.globalAlpha = 1;
 }
 
-/**
- * Draw a scene card with text
- * @param {number} alpha 0..1
- * @param {number} yOffset slide offset
- */
-function drawSceneCard(ctx, w, h, theme, text, alpha, yOffset = 0) {
-  const padding = w * 0.06;
-  const cardW = w - padding * 2;
-  const fontSize = Math.round(w * 0.055);
-
-  ctx.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, Arial, sans-serif`;
-  const lines = wrapText(ctx, text, cardW - 32);
-  const lineH = fontSize * 1.4;
-  const cardH = lines.length * lineH + 32;
-  const cardX = padding;
-  const cardY = h * 0.38 + yOffset;
-
+/** Hook / title card drawn at the very start */
+function drawHookCard(ctx, hook, alpha) {
   ctx.globalAlpha = alpha;
+
+  const fontSize = Math.round(CANVAS_W * 0.076);
+  ctx.font = `bold ${fontSize}px -apple-system, Arial, sans-serif`;
+  ctx.textAlign = 'center';
+
+  const lines = wrapText(ctx, hook, CANVAS_W * 0.82);
+  const lineH = fontSize * 1.3;
+  const totalH = lines.length * lineH + 40;
+  const startY = (CANVAS_H - totalH) / 2 - 20;
 
   // Card background
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  roundRect(ctx, cardX, cardY, cardW, cardH, 14);
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.beginPath();
+  ctx.roundRect(24, startY - 16, CANVAS_W - 48, totalH, 18);
   ctx.fill();
 
-  ctx.strokeStyle = `${theme.accent}88`;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-
-  // Left accent bar
-  ctx.fillStyle = theme.accent;
-  roundRect(ctx, cardX, cardY, 4, cardH, [14, 0, 0, 14]);
+  // Accent top bar
+  ctx.fillStyle = '#7c3aed';
+  ctx.beginPath();
+  ctx.roundRect(24, startY - 16, CANVAS_W - 48, 5, [18, 18, 0, 0]);
   ctx.fill();
 
-  // Text
-  ctx.fillStyle = theme.text;
-  ctx.textAlign = 'left';
+  ctx.fillStyle   = '#ffffff';
+  ctx.shadowColor = 'rgba(120,50,220,0.5)'; ctx.shadowBlur = 20;
   lines.forEach((line, i) => {
-    ctx.fillText(line, cardX + 20, cardY + 28 + i * lineH);
+    ctx.fillText(line, CANVAS_W / 2, startY + i * lineH + lineH * 0.6);
   });
+  ctx.shadowBlur = 0;
 
   ctx.globalAlpha = 1;
 }
 
-/**
- * Draw emoji + narration excerpt
- */
-function drawNarrationStrip(ctx, w, h, theme, emoji, narrationSnippet, alpha) {
-  const stripH = 64;
-  const stripY = h * 0.72;
-
-  ctx.globalAlpha = alpha * 0.9;
-
-  ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  ctx.fillRect(0, stripY, w, stripH);
-
-  // Emoji
-  ctx.font = `${Math.round(w * 0.08)}px serif`;
-  ctx.textAlign = 'left';
-  ctx.fillText(emoji, 20, stripY + 44);
-
-  // Narration snippet
-  const fontSize = Math.round(w * 0.04);
-  ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, Arial, sans-serif`;
-  ctx.fillStyle = theme.sub;
-
-  const maxW = w - 80;
-  const lines = wrapText(ctx, narrationSnippet, maxW);
-  ctx.fillText(lines[0] || '', 70, stripY + 32);
-  if (lines[1]) ctx.fillText(lines[1], 70, stripY + 32 + fontSize * 1.3);
-
-  ctx.globalAlpha = 1;
-}
-
-/**
- * Draw CTA + hashtags
- */
-function drawCTA(ctx, w, h, theme, cta, hashtags, alpha) {
+/** Outro card */
+function drawOutroCard(ctx, outro, hashtags, alpha) {
   ctx.globalAlpha = alpha;
 
-  const fontSize = Math.round(w * 0.045);
-  ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, Arial, sans-serif`;
+  const fontSize = Math.round(CANVAS_W * 0.065);
+  ctx.font = `bold ${fontSize}px -apple-system, Arial, sans-serif`;
   ctx.textAlign = 'center';
 
-  // CTA background pill
-  const ctaW = w * 0.8;
-  const ctaH = 44;
-  const ctaX = w * 0.1;
-  const ctaY = h * 0.82;
+  const lines = wrapText(ctx, outro, CANVAS_W * 0.8);
+  const lineH = fontSize * 1.35;
+
+  // Pill CTA
+  const ctaW = CANVAS_W * 0.78;
+  const ctaH = lines.length * lineH + 28;
+  const ctaX = (CANVAS_W - ctaW) / 2;
+  const ctaY = CANVAS_H * 0.78;
 
   const grad = ctx.createLinearGradient(ctaX, 0, ctaX + ctaW, 0);
-  grad.addColorStop(0, theme.accent);
-  grad.addColorStop(1, theme.bg[2]);
+  grad.addColorStop(0, '#7c3aed');
+  grad.addColorStop(1, '#2563eb');
   ctx.fillStyle = grad;
-  roundRect(ctx, ctaX, ctaY, ctaW, ctaH, 22);
+  ctx.beginPath();
+  ctx.roundRect(ctaX, ctaY, ctaW, ctaH, 14);
   ctx.fill();
 
   ctx.fillStyle = '#ffffff';
-  ctx.fillText(cta, w / 2, ctaY + 30);
+  lines.forEach((line, i) => {
+    ctx.fillText(line, CANVAS_W / 2, ctaY + 20 + (i + 0.75) * lineH);
+  });
 
   // Hashtags
   if (hashtags.length > 0) {
-    const hashText = hashtags.slice(0, 4).map(h => `#${h}`).join(' ');
-    ctx.font = `${Math.round(w * 0.035)}px -apple-system, BlinkMacSystemFont, Arial, sans-serif`;
-    ctx.fillStyle = theme.sub;
-    ctx.fillText(hashText, w / 2, ctaY + 68);
+    const tagStr = hashtags.slice(0, 5).map(h => `#${h}`).join('  ');
+    ctx.font = `${Math.round(CANVAS_W * 0.038)}px -apple-system, Arial, sans-serif`;
+    ctx.fillStyle = 'rgba(200,180,255,0.85)';
+    ctx.fillText(tagStr, CANVAS_W / 2, ctaY + ctaH + 26);
   }
 
   ctx.globalAlpha = 1;
 }
 
-/**
- * Draw a progress bar at the bottom
- */
-function drawProgressBar(ctx, w, h, theme, progress) {
-  const barH = 4;
-  const barY = h - barH;
+/** Episode / series badge in top-right corner */
+function drawBadge(ctx, label) {
+  if (!label) return;
+  ctx.font = `bold ${Math.round(CANVAS_W * 0.04)}px -apple-system, Arial, sans-serif`;
+  const tw = ctx.measureText(label).width;
+  const bw = tw + 20, bh = 28, bx = CANVAS_W - bw - 12, by = 14;
 
-  ctx.fillStyle = 'rgba(255,255,255,0.1)';
-  ctx.fillRect(0, barY, w, barH);
-
-  ctx.fillStyle = theme.accent;
-  ctx.fillRect(0, barY, w * progress, barH);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 6); ctx.fill();
+  ctx.strokeStyle = 'rgba(124,58,237,0.6)'; ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.fillStyle = '#c4b5fd';
+  ctx.textAlign = 'center';
+  ctx.fillText(label, bx + bw / 2, by + 18);
 }
 
+/** Bottom progress bar */
+function drawProgressBar(ctx, progress) {
+  const h = 4;
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  ctx.fillRect(0, CANVAS_H - h, CANVAS_W, h);
+  ctx.fillStyle = '#7c3aed';
+  ctx.fillRect(0, CANVAS_H - h, CANVAS_W * progress, h);
+}
+
+/** Crossfade overlay between two scenes */
+function drawTransitionOverlay(ctx, transitionT, transitionType, prevImg, sceneIndex) {
+  if (transitionType === 'cut') return;
+
+  if (transitionType === 'slide') {
+    // Draw previous scene shifted out to the right
+    if (prevImg) {
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, 1 - transitionT * 2);
+      ctx.translate(CANVAS_W * transitionT, 0);
+      ctx.drawImage(prevImg, 0, 0, CANVAS_W, CANVAS_H);
+      ctx.restore();
+    }
+  } else if (transitionType === 'zoom') {
+    if (transitionT < 0.5) {
+      const scale = 1 + transitionT * 0.15;
+      ctx.save();
+      ctx.globalAlpha = 1 - transitionT * 2;
+      ctx.translate(CANVAS_W / 2, CANVAS_H / 2);
+      ctx.scale(scale, scale);
+      ctx.translate(-CANVAS_W / 2, -CANVAS_H / 2);
+      if (prevImg) ctx.drawImage(prevImg, 0, 0, CANVAS_W, CANVAS_H);
+      ctx.restore();
+    }
+  } else {
+    // crossfade — black fade through
+    const fadeAlpha = transitionT < 0.5
+      ? transitionT * 2
+      : (1 - transitionT) * 2;
+    ctx.globalAlpha = Math.min(1, fadeAlpha);
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ─────────────────────────────────────────────────────
+// Main render function
+// ─────────────────────────────────────────────────────
+
 /**
- * Render one video to a Blob
+ * Render a single video from a VideoScript object.
  *
- * @param {Object} script  VideoScript object
+ * @param {import('./grok-api.js').VideoScript} script
  * @param {Object} options
- * @param {string} options.aspectRatio  '9:16' | '1:1' | '16:9'
- * @param {string} options.theme        theme key
- * @param {string} options.animation    'fade' | 'slide' | 'typewriter' | 'bounce'
- * @param {number} options.duration     seconds
- * @param {string} options.quality      'high' | 'medium' | 'low'
- * @param {number} options.videoIndex   0-based index
- * @param {number} options.totalVideos
- * @param {function} options.onProgress (0..100)
- * @returns {Promise<Blob>} WebM video blob
+ * @param {string}   options.captionStyle   'subtitle' | 'bold_center' | 'typewriter' | 'none'
+ * @param {string}   options.transition     'crossfade' | 'slide' | 'zoom' | 'cut'
+ * @param {string}   options.quality        'high' | 'medium' | 'low'
+ * @param {function} options.onProgress     (0-100)
+ * @returns {Promise<Blob>}
  */
-export function renderVideo(script, options) {
-  return new Promise((resolve, reject) => {
+export function renderVideo(script, options = {}) {
+  return new Promise(async (resolve, reject) => {
     const {
-      aspectRatio = '9:16',
-      theme: themeKey = 'dark-purple',
-      animation = 'fade',
-      duration = 30,
-      quality = 'medium',
-      videoIndex = 0,
-      totalVideos = 1,
+      captionStyle = 'subtitle',
+      transition   = 'crossfade',
+      quality      = 'medium',
       onProgress,
     } = options;
 
-    const { width, height } = DIMENSIONS[aspectRatio] || DIMENSIONS['9:16'];
-    const theme = THEMES[themeKey] || THEMES['dark-purple'];
-    const fps = 30;
-    const totalFrames = duration * fps;
-    const bitrate = QUALITY_BITRATE[quality] || QUALITY_BITRATE.medium;
+    // Pre-load all images
+    const images = await Promise.all(
+      script.scenes.map(s => loadImage(s.imageDataUrl))
+    );
 
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
+    // Build frame timeline
+    const HOOK_SECS  = 1.5;
+    const OUTRO_SECS = 2.5;
+    const TRANS_SECS = 0.4; // transition overlap duration
 
-    // Set up MediaRecorder
-    const stream = canvas.captureStream(fps);
+    const segments = [];
+
+    // Hook card
+    segments.push({ type: 'hook', duration: HOOK_SECS, text: script.hook });
+
+    // Scenes
+    script.scenes.forEach((scene, i) => {
+      segments.push({
+        type:      'scene',
+        duration:  scene.duration || 5,
+        scene,
+        img:       images[i],
+        prevImg:   i > 0 ? images[i - 1] : null,
+        index:     i,
+      });
+    });
+
+    // Outro
+    segments.push({ type: 'outro', duration: OUTRO_SECS });
+
+    const totalDuration = segments.reduce((s, seg) => s + seg.duration, 0);
+    const totalFrames   = Math.ceil(totalDuration * FPS);
+
+    // Canvas + recorder setup
+    const canvas  = document.createElement('canvas');
+    canvas.width  = CANVAS_W;
+    canvas.height = CANVAS_H;
+    const ctx     = canvas.getContext('2d');
+
     const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
       ? 'video/webm;codecs=vp9'
       : 'video/webm';
 
-    const recorder = new MediaRecorder(stream, {
+    const recorder = new MediaRecorder(canvas.captureStream(FPS), {
       mimeType,
-      videoBitsPerSecond: bitrate,
+      videoBitsPerSecond: QUALITY_BITRATE[quality] || QUALITY_BITRATE.medium,
     });
 
     const chunks = [];
     recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-    recorder.onstop = () => {
-      resolve(new Blob(chunks, { type: mimeType }));
-    };
-    recorder.onerror = e => reject(new Error(`MediaRecorder error: ${e.error?.message}`));
-
+    recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
+    recorder.onerror = e => reject(new Error(e.error?.message || 'MediaRecorder error'));
     recorder.start();
 
-    // --- Animation timeline ---
-    // Segment durations (in frames):
-    //   0-10%  : Hook intro
-    //   10-75% : Scenes (equally divided)
-    //   75-90% : Narration strip
-    //   90-100%: CTA + hashtags
-    const sceneCount = Math.max(script.scenes.length, 1);
-    const hookEnd = totalFrames * 0.12;
-    const scenesStart = hookEnd;
-    const scenesEnd = totalFrames * 0.75;
-    const narrationStart = scenesEnd;
-    const narrationEnd = totalFrames * 0.88;
-    const ctaStart = narrationEnd;
-
-    const sceneFrames = (scenesEnd - scenesStart) / sceneCount;
-
-    let frame = 0;
-    const narrationWords = script.narration.split(' ');
+    // ── Frame loop ──
+    let frameNum = 0;
 
     function renderFrame() {
-      if (frame >= totalFrames) {
+      if (frameNum >= totalFrames) {
         recorder.stop();
         return;
       }
 
-      const t = frame / totalFrames; // global time 0..1
+      const globalT   = frameNum / totalFrames;
+      const timeSec   = frameNum / FPS;
+      onProgress?.(Math.round(globalT * 100));
 
-      // --- Background ---
-      drawBackground(ctx, width, height, theme, t);
+      // Find which segment we're in
+      let elapsed = 0;
+      let seg = null;
+      for (const s of segments) {
+        if (timeSec < elapsed + s.duration) { seg = s; break; }
+        elapsed += s.duration;
+      }
+      if (!seg) { recorder.stop(); return; }
 
-      // --- Badge ---
-      drawBadge(ctx, width, theme, videoIndex + 1, totalVideos);
+      const localT = (timeSec - elapsed) / seg.duration; // 0..1 within segment
 
-      // --- Hook phase ---
-      if (frame < hookEnd) {
-        const localT = frame / hookEnd;
-        let alpha;
-        if (animation === 'typewriter') {
-          // Reveal characters progressively
-          alpha = 1;
-          const chars = Math.floor(localT * script.hook.length);
-          drawHook(ctx, width, height, theme, script.hook.slice(0, chars), 1, animation);
+      // ── Segment rendering ──
+      ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+
+      if (seg.type === 'hook') {
+        // Hook: gradient BG + centered title card
+        drawFallbackGradient(ctx, 0);
+        const alpha = localT < 0.15 ? localT / 0.15
+                    : localT > 0.85 ? (1 - localT) / 0.15
+                    : 1;
+        drawHookCard(ctx, seg.text, alpha);
+
+      } else if (seg.type === 'scene') {
+        const { img, index, scene, prevImg } = seg;
+
+        // Transition phase at start of scene
+        const isTransition = localT < (TRANS_SECS / seg.duration);
+        const transT = isTransition ? localT / (TRANS_SECS / seg.duration) : 1;
+
+        // Draw current scene with Ken Burns
+        if (img) {
+          drawKenBurns(ctx, img, localT, index);
         } else {
-          alpha = Math.min(1, localT * 3); // quick fade in
-          drawHook(ctx, width, height, theme, script.hook, alpha, animation);
+          drawFallbackGradient(ctx, index);
         }
-      } else {
-        // Keep hook visible at reduced opacity
-        drawHook(ctx, width, height, theme, script.hook, 0.35, 'fade');
-      }
+        drawScrim(ctx);
 
-      // --- Scenes phase ---
-      if (frame >= scenesStart && frame < scenesEnd) {
-        const sceneIdx = Math.floor((frame - scenesStart) / sceneFrames);
-        const localT = ((frame - scenesStart) % sceneFrames) / sceneFrames;
-        const sceneText = script.scenes[Math.min(sceneIdx, sceneCount - 1)] || '';
+        // Transition overlay (fades prev scene out)
+        if (isTransition && index > 0) {
+          drawTransitionOverlay(ctx, transT, transition, prevImg, index);
+        }
 
-        let alpha, yOffset = 0;
-        if (animation === 'slide') {
-          alpha = Math.min(1, localT * 4);
-          yOffset = (1 - alpha) * 40;
-        } else if (animation === 'bounce') {
-          alpha = Math.min(1, localT * 4);
-          yOffset = alpha < 1 ? (1 - alpha) * -30 : 0;
+        // Caption fades in after transition
+        const captionAlpha = localT < (TRANS_SECS / seg.duration) * 1.5
+          ? 0
+          : Math.min(1, (localT - TRANS_SECS / seg.duration * 1.5) / 0.12);
+
+        drawCaption(ctx, scene.caption, captionStyle, captionAlpha, localT);
+        drawBadge(ctx, script.episode);
+
+      } else if (seg.type === 'outro') {
+        // Use last scene image as BG
+        const lastImg = images[images.length - 1];
+        if (lastImg) {
+          ctx.drawImage(lastImg, 0, 0, CANVAS_W, CANVAS_H);
         } else {
-          alpha = localT < 0.15 ? localT / 0.15
-                : localT > 0.85 ? (1 - localT) / 0.15
-                : 1;
+          drawFallbackGradient(ctx, script.scenes.length);
         }
+        drawScrim(ctx, 0.85);
 
-        drawSceneCard(ctx, width, height, theme, sceneText, alpha, yOffset);
+        const alpha = localT < 0.2 ? localT / 0.2 : 1;
+        drawOutroCard(ctx, script.outro, script.hashtags, alpha);
       }
 
-      // --- Narration strip ---
-      if (frame >= narrationStart && frame < narrationEnd) {
-        const localT = (frame - narrationStart) / (narrationEnd - narrationStart);
-        const alpha = Math.min(1, localT * 3);
+      drawProgressBar(ctx, globalT);
 
-        // Show progressive narration snippet
-        const wordCount = Math.floor(localT * narrationWords.length);
-        const snippet = narrationWords.slice(0, Math.max(8, wordCount)).join(' ') + '...';
-        drawNarrationStrip(ctx, width, height, theme, script.emoji, snippet, alpha);
-      }
-
-      // --- CTA phase ---
-      if (frame >= ctaStart) {
-        const localT = (frame - ctaStart) / (totalFrames - ctaStart);
-        const alpha = Math.min(1, localT * 2);
-        drawCTA(ctx, width, height, theme, script.callToAction, script.hashtags, alpha);
-      }
-
-      // --- Progress bar ---
-      drawProgressBar(ctx, width, height, theme, t);
-
-      // --- Video title watermark ---
-      ctx.globalAlpha = 0.5;
-      ctx.font = `bold ${Math.round(width * 0.033)}px -apple-system, BlinkMacSystemFont, Arial, sans-serif`;
-      ctx.fillStyle = theme.text;
-      ctx.textAlign = 'left';
-      ctx.fillText(script.title, 16, height - 20);
-      ctx.globalAlpha = 1;
-
-      frame++;
-      onProgress?.(Math.round((frame / totalFrames) * 100));
+      frameNum++;
       requestAnimationFrame(renderFrame);
     }
 
@@ -491,27 +496,25 @@ export function renderVideo(script, options) {
 }
 
 /**
- * Render all videos in a series
- * @param {import('./grok-api.js').VideoSeries} series
- * @param {Object} options  Same as renderVideo options
- * @param {function} onVideoProgress (videoIndex, frameProgress 0-100)
- * @param {function} onVideoDone (videoIndex, blob)
+ * Render all videos in a project, one at a time.
+ *
+ * @param {import('./grok-api.js').StoryProject} project
+ * @param {Object}   options   Same options as renderVideo
+ * @param {function} onVideoStart    (index)
+ * @param {function} onVideoProgress (index, 0-100)
+ * @param {function} onVideoDone     (index, blob)
  * @returns {Promise<Blob[]>}
  */
-export async function renderSeries(series, options, onVideoProgress, onVideoDone) {
+export async function renderProject(project, options, onVideoStart, onVideoProgress, onVideoDone) {
   const blobs = [];
-
-  for (let i = 0; i < series.videos.length; i++) {
-    const script = series.videos[i];
-    const blob = await renderVideo(script, {
+  for (let i = 0; i < project.videos.length; i++) {
+    onVideoStart?.(i);
+    const blob = await renderVideo(project.videos[i], {
       ...options,
-      videoIndex: i,
-      totalVideos: series.videos.length,
-      onProgress: (p) => onVideoProgress?.(i, p),
+      onProgress: p => onVideoProgress?.(i, p),
     });
     blobs.push(blob);
     onVideoDone?.(i, blob);
   }
-
   return blobs;
 }

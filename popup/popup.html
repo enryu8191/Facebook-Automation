@@ -3,16 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Grok Video Generator</title>
+  <title>Grok Video Creator</title>
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
+
   <!-- Header -->
   <header class="header">
     <div class="logo">G▶</div>
     <div class="header-text">
-      <span class="header-title">Grok Video Series</span>
-      <span class="header-sub">AI Short Video Generator</span>
+      <span class="header-title">Grok Video Creator</span>
+      <span class="header-sub">Story → Images → Video</span>
     </div>
     <button class="icon-btn" id="settingsBtn" title="Settings">⚙</button>
   </header>
@@ -20,242 +21,282 @@
   <!-- Step Indicator -->
   <div class="steps" id="stepIndicator">
     <div class="step active" data-step="1">
-      <div class="step-dot">1</div>
-      <span>Topic</span>
+      <div class="step-dot">1</div><span>Story</span>
     </div>
     <div class="step-line"></div>
     <div class="step" data-step="2">
-      <div class="step-dot">2</div>
-      <span>Style</span>
+      <div class="step-dot">2</div><span>Style</span>
     </div>
     <div class="step-line"></div>
     <div class="step" data-step="3">
-      <div class="step-dot">3</div>
-      <span>Generate</span>
+      <div class="step-dot">3</div><span>Create</span>
     </div>
     <div class="step-line"></div>
     <div class="step" data-step="4">
-      <div class="step-dot">4</div>
-      <span>Export</span>
+      <div class="step-dot">4</div><span>Export</span>
     </div>
   </div>
 
-  <!-- Main Content -->
   <main class="main">
 
-    <!-- Step 1: Topic Input -->
+    <!-- ================================================================
+         STEP 1: Story / Concept
+    ================================================================ -->
     <div class="panel" id="panel-1">
-      <h2 class="panel-title">What's your video series about?</h2>
-      <p class="panel-desc">Describe your topic and Grok will generate a complete video series script.</p>
+      <h2 class="panel-title">What's your video about?</h2>
+      <p class="panel-desc">Describe your story, idea, or topic. Grok will write the script and generate images for every scene.</p>
 
       <div class="form-group">
-        <label>Topic / Idea</label>
-        <textarea id="topicInput" placeholder="e.g. &quot;5 science facts that will blow your mind&quot; or &quot;how to build a morning routine&quot;" rows="3"></textarea>
-        <span class="char-count"><span id="charCount">0</span>/300</span>
+        <label>Your story or idea</label>
+        <textarea id="storyInput" rows="4"
+          placeholder="e.g. &quot;A lone astronaut discovers an ancient signal on Mars&quot; or &quot;3 habits that changed my life&quot; or &quot;a lofi animated cat studying at midnight&quot;"></textarea>
+        <span class="char-count"><span id="charCount">0</span>/500</span>
       </div>
 
+      <!-- Series or single -->
       <div class="form-group">
-        <label>Target Audience</label>
-        <input type="text" id="audienceInput" placeholder="e.g. college students, entrepreneurs, fitness lovers" />
-      </div>
-
-      <div class="form-group">
-        <label>Number of Videos</label>
-        <div class="range-row">
-          <input type="range" id="videoCount" min="3" max="15" value="5" />
-          <span class="range-val" id="videoCountVal">5 videos</span>
+        <label>Format</label>
+        <div class="format-cards" id="formatCards">
+          <button class="format-card active" data-val="single">
+            <span class="fc-icon">🎬</span>
+            <strong>Single Video</strong>
+            <span>One complete short video</span>
+          </button>
+          <button class="format-card" data-val="series">
+            <span class="fc-icon">📺</span>
+            <strong>Series</strong>
+            <span>Multi-part episodes</span>
+          </button>
         </div>
       </div>
 
+      <!-- Series count (shown only when series selected) -->
+      <div class="form-group hidden" id="seriesCountGroup">
+        <label>Number of episodes</label>
+        <div class="range-row">
+          <input type="range" id="episodeCount" min="2" max="10" value="3" />
+          <span class="range-val" id="episodeCountVal">3 episodes</span>
+        </div>
+      </div>
+
+      <!-- Scenes per video -->
+      <div class="form-group">
+        <label>Scenes per video</label>
+        <div class="range-row">
+          <input type="range" id="sceneCount" min="3" max="8" value="5" />
+          <span class="range-val" id="sceneCountVal">5 scenes</span>
+        </div>
+      </div>
+
+      <!-- Quick prompts -->
       <div class="quick-ideas">
         <p class="hint-label">Quick ideas:</p>
-        <div class="chips" id="quickIdeas">
-          <button class="chip">🧠 Life hacks</button>
-          <button class="chip">💡 Science facts</button>
-          <button class="chip">💪 Fitness tips</button>
-          <button class="chip">📈 Business advice</button>
-          <button class="chip">🌍 Travel spots</button>
-          <button class="chip">🍳 Cooking tricks</button>
-          <button class="chip">📚 Book summaries</button>
-          <button class="chip">🤖 AI tools</button>
+        <div class="chips" id="quickChips">
+          <button class="chip">🚀 Sci-fi short story</button>
+          <button class="chip">🌙 Lo-fi aesthetic</button>
+          <button class="chip">🔥 Motivational series</button>
+          <button class="chip">🧠 Mind-bending facts</button>
+          <button class="chip">🌊 Ocean adventure</button>
+          <button class="chip">👾 Pixel art world</button>
+          <button class="chip">🏙 Urban mystery</button>
+          <button class="chip">🌿 Nature documentary</button>
         </div>
       </div>
 
       <div class="panel-footer">
-        <button class="btn btn-primary full-width" id="step1Next" disabled>Next: Choose Style →</button>
+        <button class="btn btn-primary full-width" id="step1Next" disabled>
+          Next: Choose Visual Style →
+        </button>
       </div>
     </div>
 
-    <!-- Step 2: Style Configuration -->
+    <!-- ================================================================
+         STEP 2: Visual Style
+    ================================================================ -->
     <div class="panel hidden" id="panel-2">
-      <h2 class="panel-title">Customize your video style</h2>
-      <p class="panel-desc">Configure how your videos will look and sound.</p>
+      <h2 class="panel-title">Set your visual style</h2>
+      <p class="panel-desc">These settings shape how Grok Imagine generates each scene image.</p>
 
       <div class="form-group">
-        <label>Video Style</label>
-        <div class="toggle-group" id="videoStyle">
-          <button class="toggle-btn active" data-val="educational">📚 Educational</button>
-          <button class="toggle-btn" data-val="motivational">💪 Motivational</button>
-          <button class="toggle-btn" data-val="storytelling">📖 Story</button>
-          <button class="toggle-btn" data-val="tutorial">🛠 Tutorial</button>
-          <button class="toggle-btn" data-val="entertainment">🎭 Fun</button>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label>Video Duration</label>
-        <div class="toggle-group" id="videoDuration">
-          <button class="toggle-btn" data-val="15">15s</button>
-          <button class="toggle-btn active" data-val="30">30s</button>
-          <button class="toggle-btn" data-val="45">45s</button>
-          <button class="toggle-btn" data-val="60">60s</button>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label>Color Theme</label>
-        <div class="theme-grid" id="colorTheme">
-          <button class="theme-btn active" data-val="dark-purple">
-            <span class="theme-preview" style="background:linear-gradient(135deg,#1a0533,#2d1b69)"></span>
-            <span>Dark Purple</span>
+        <label>Art Style</label>
+        <div class="style-grid" id="artStyle">
+          <button class="style-btn active" data-val="cinematic">
+            <span>🎥</span><span>Cinematic</span>
           </button>
-          <button class="theme-btn" data-val="dark-blue">
-            <span class="theme-preview" style="background:linear-gradient(135deg,#0d1b4b,#1e3a8a)"></span>
-            <span>Dark Blue</span>
+          <button class="style-btn" data-val="anime">
+            <span>🌸</span><span>Anime</span>
           </button>
-          <button class="theme-btn" data-val="sunset">
-            <span class="theme-preview" style="background:linear-gradient(135deg,#7c2d12,#c2410c,#db2777)"></span>
-            <span>Sunset</span>
+          <button class="style-btn" data-val="cartoon">
+            <span>🎨</span><span>Cartoon</span>
           </button>
-          <button class="theme-btn" data-val="forest">
-            <span class="theme-preview" style="background:linear-gradient(135deg,#052e16,#14532d,#166534)"></span>
-            <span>Forest</span>
+          <button class="style-btn" data-val="realistic">
+            <span>📷</span><span>Realistic</span>
           </button>
-          <button class="theme-btn" data-val="neon">
-            <span class="theme-preview" style="background:linear-gradient(135deg,#0a0a0a,#1a1a2e);border:1px solid #00ff88"></span>
-            <span>Neon</span>
+          <button class="style-btn" data-val="oil_painting">
+            <span>🖌</span><span>Oil Painting</span>
           </button>
-          <button class="theme-btn" data-val="minimal">
-            <span class="theme-preview" style="background:linear-gradient(135deg,#1e293b,#334155)"></span>
-            <span>Minimal</span>
+          <button class="style-btn" data-val="watercolor">
+            <span>💧</span><span>Watercolor</span>
+          </button>
+          <button class="style-btn" data-val="pixel_art">
+            <span>👾</span><span>Pixel Art</span>
+          </button>
+          <button class="style-btn" data-val="dark_fantasy">
+            <span>🌑</span><span>Dark Fantasy</span>
+          </button>
+          <button class="style-btn" data-val="lofi">
+            <span>🌙</span><span>Lo-Fi</span>
           </button>
         </div>
       </div>
 
       <div class="form-group">
-        <label>Text Animation</label>
-        <div class="toggle-group" id="textAnimation">
-          <button class="toggle-btn active" data-val="fade">✨ Fade</button>
+        <label>Mood / Lighting</label>
+        <div class="toggle-group" id="moodStyle">
+          <button class="toggle-btn active" data-val="dramatic">🔥 Dramatic</button>
+          <button class="toggle-btn" data-val="soft">🌸 Soft</button>
+          <button class="toggle-btn" data-val="dark">🌑 Dark</button>
+          <button class="toggle-btn" data-val="vibrant">⚡ Vibrant</button>
+          <button class="toggle-btn" data-val="golden">🌅 Golden</button>
+          <button class="toggle-btn" data-val="neon">💜 Neon</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Shot Type (camera direction)</label>
+        <div class="toggle-group" id="shotType">
+          <button class="toggle-btn active" data-val="varied">🎬 Varied</button>
+          <button class="toggle-btn" data-val="closeup">🔍 Close-up</button>
+          <button class="toggle-btn" data-val="wide">🌄 Wide</button>
+          <button class="toggle-btn" data-val="pov">👁 POV</button>
+          <button class="toggle-btn" data-val="aerial">🦅 Aerial</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Scene transition</label>
+        <div class="toggle-group" id="transition">
+          <button class="toggle-btn active" data-val="crossfade">✨ Crossfade</button>
           <button class="toggle-btn" data-val="slide">➡ Slide</button>
-          <button class="toggle-btn" data-val="typewriter">⌨ Typewriter</button>
-          <button class="toggle-btn" data-val="bounce">🔵 Bounce</button>
+          <button class="toggle-btn" data-val="zoom">🔭 Zoom</button>
+          <button class="toggle-btn" data-val="cut">✂ Hard cut</button>
         </div>
       </div>
 
       <div class="form-group">
-        <label>Include hashtags</label>
-        <div class="toggle-group" id="hashtagToggle">
-          <button class="toggle-btn active" data-val="yes">✓ Yes</button>
-          <button class="toggle-btn" data-val="no">✗ No</button>
+        <label>Caption style</label>
+        <div class="toggle-group" id="captionStyle">
+          <button class="toggle-btn active" data-val="subtitle">📝 Subtitle bar</button>
+          <button class="toggle-btn" data-val="bold_center">💥 Bold center</button>
+          <button class="toggle-btn" data-val="typewriter">⌨ Typewriter</button>
+          <button class="toggle-btn" data-val="none">🚫 None</button>
         </div>
       </div>
 
       <div class="panel-footer two-col">
         <button class="btn btn-secondary" id="step2Back">← Back</button>
-        <button class="btn btn-primary" id="step2Next">Generate Scripts →</button>
+        <button class="btn btn-primary" id="step2Next">Create Video →</button>
       </div>
     </div>
 
-    <!-- Step 3: Generate -->
+    <!-- ================================================================
+         STEP 3: Generate (script + images + render)
+    ================================================================ -->
     <div class="panel hidden" id="panel-3">
-      <h2 class="panel-title" id="generateTitle">Generating with Grok...</h2>
-      <p class="panel-desc" id="generateDesc">Grok is crafting your video scripts. This takes a few seconds.</p>
+      <h2 class="panel-title" id="genTitle">Working on it...</h2>
+      <p class="panel-desc" id="genDesc">Grok is writing your script and generating images. This opens grok.com briefly.</p>
 
-      <!-- Progress -->
-      <div class="generate-progress" id="generateProgress">
-        <div class="progress-bar-wrap">
-          <div class="progress-bar" id="progressBar"></div>
+      <!-- Overall progress -->
+      <div class="progress-bar-wrap">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+
+      <!-- Phase indicator -->
+      <div class="phase-list" id="phaseList">
+        <div class="phase-item" id="phase-script">
+          <div class="phase-icon">📝</div>
+          <div class="phase-body">
+            <strong>Writing script</strong>
+            <span id="phase-script-sub">Asking Grok to write your story & scene directions...</span>
+          </div>
+          <div class="phase-status idle" id="phase-script-status">—</div>
         </div>
-        <div class="progress-steps" id="progressSteps">
-          <div class="progress-step active" id="ps-script">
-            <span class="ps-icon">📝</span>
-            <span class="ps-text">Generating scripts...</span>
+        <div class="phase-item" id="phase-images">
+          <div class="phase-icon">🎨</div>
+          <div class="phase-body">
+            <strong>Generating images</strong>
+            <span id="phase-images-sub">Grok Imagine will create one image per scene</span>
           </div>
-          <div class="progress-step" id="ps-render">
-            <span class="ps-icon">🎬</span>
-            <span class="ps-text">Rendering videos...</span>
+          <div class="phase-status idle" id="phase-images-status">—</div>
+        </div>
+        <div class="phase-item" id="phase-render">
+          <div class="phase-icon">🎬</div>
+          <div class="phase-body">
+            <strong>Rendering video</strong>
+            <span id="phase-render-sub">Compositing images + captions into video</span>
           </div>
-          <div class="progress-step" id="ps-done">
-            <span class="ps-icon">✅</span>
-            <span class="ps-text">Finalizing...</span>
-          </div>
+          <div class="phase-status idle" id="phase-render-status">—</div>
         </div>
       </div>
 
-      <!-- Video List (populated after generation) -->
-      <div class="video-list hidden" id="videoList"></div>
+      <!-- Scene strip (shows image thumbnails as they come in) -->
+      <div class="scene-strip hidden" id="sceneStrip">
+        <p class="hint-label">Generated scenes:</p>
+        <div class="scene-thumbs" id="sceneThumbs"></div>
+      </div>
 
-      <!-- Error State -->
+      <!-- Error state -->
       <div class="error-state hidden" id="errorState">
         <span class="error-icon">⚠️</span>
         <p id="errorMsg"></p>
         <button class="btn btn-secondary" id="retryBtn">Try Again</button>
       </div>
 
-      <div class="panel-footer two-col" id="step3Footer" style="display:none">
+      <div class="panel-footer two-col hidden" id="step3Footer">
         <button class="btn btn-secondary" id="step3Back">← Back</button>
-        <button class="btn btn-primary" id="step3Next">Export Videos →</button>
+        <button class="btn btn-primary" id="step3Next">Export →</button>
       </div>
     </div>
 
-    <!-- Step 4: Export -->
+    <!-- ================================================================
+         STEP 4: Export
+    ================================================================ -->
     <div class="panel hidden" id="panel-4">
-      <h2 class="panel-title">Export your videos</h2>
-      <p class="panel-desc">Download individual videos or bundle them all at once.</p>
+      <h2 class="panel-title">Your video is ready</h2>
+      <p class="panel-desc" id="exportDesc"></p>
 
-      <div class="export-summary" id="exportSummary"></div>
+      <!-- Video previews -->
+      <div class="video-preview-list" id="videoPreviewList"></div>
 
-      <div class="form-group">
-        <label>Export Options</label>
-        <div class="export-options">
-          <button class="export-opt" id="exportAll">
-            <span class="eo-icon">📦</span>
-            <div class="eo-text">
-              <strong>Download All</strong>
-              <span>Save all videos as a ZIP bundle</span>
-            </div>
-          </button>
-          <button class="export-opt" id="exportSelected">
-            <span class="eo-icon">🎯</span>
-            <div class="eo-text">
-              <strong>Download Selected</strong>
-              <span>Choose which videos to save</span>
-            </div>
-          </button>
-          <button class="export-opt" id="copyScripts">
-            <span class="eo-icon">📋</span>
-            <div class="eo-text">
-              <strong>Copy Scripts</strong>
-              <span>Copy all scripts to clipboard</span>
-            </div>
-          </button>
-        </div>
+      <div class="export-actions">
+        <button class="export-opt" id="exportAll">
+          <span class="eo-icon">⬇</span>
+          <div class="eo-text">
+            <strong>Download All</strong>
+            <span id="exportAllSub">Save all videos as .webm</span>
+          </div>
+        </button>
+        <button class="export-opt" id="copyScripts">
+          <span class="eo-icon">📋</span>
+          <div class="eo-text">
+            <strong>Copy Scripts</strong>
+            <span>Full narration + scene directions</span>
+          </div>
+        </button>
       </div>
-
-      <div class="export-video-list" id="exportVideoList"></div>
 
       <div class="panel-footer two-col">
         <button class="btn btn-secondary" id="step4Back">← Back</button>
-        <button class="btn btn-primary" id="newSeriesBtn">+ New Series</button>
+        <button class="btn btn-primary" id="newVideoBtn">+ New Video</button>
       </div>
     </div>
 
   </main>
 
-  <!-- No Grok tab open banner -->
-  <div class="no-api-banner hidden" id="noApiBanner">
-    <span>⚠️ grok.com is not open.</span>
-    <button class="banner-link" id="openGrok">Open Grok →</button>
+  <!-- Grok not open banner -->
+  <div class="no-api-banner hidden" id="noGrokBanner">
+    <span>⚠️ grok.com isn't open</span>
+    <button class="banner-link" id="openGrokBtn">Open →</button>
   </div>
 
   <script src="popup.js" type="module"></script>
