@@ -105,14 +105,11 @@ document.getElementById('step2Next').addEventListener('click', () => {
 // -----------------------------------------------------------------------
 async function startGeneration() {
   const settings = await chrome.storage.sync.get({
-    apiKey: '',
-    grokModel: 'grok-3-latest',
+    defaultDuration: 30,
+    colorTheme: 'dark-purple',
+    videoQuality: 'medium',
+    includeHashtags: 'yes',
   });
-
-  if (!settings.apiKey) {
-    showError('No API key configured. Open Settings to add your xAI API key.');
-    return;
-  }
 
   // Reset state
   state.series = null;
@@ -129,8 +126,6 @@ async function startGeneration() {
   try {
     // Phase 1: Generate scripts with Grok
     const series = await generateVideoSeries({
-      apiKey: settings.apiKey,
-      model: settings.grokModel,
       topic: topicInput.value.trim(),
       audience: audienceInput.value.trim(),
       videoCount: parseInt(videoCountSlider.value),
@@ -375,21 +370,23 @@ document.getElementById('settingsBtn').addEventListener('click', () => {
   chrome.runtime.openOptionsPage();
 });
 
-document.getElementById('openSettings')?.addEventListener('click', () => {
-  chrome.runtime.openOptionsPage();
+document.getElementById('openGrok')?.addEventListener('click', () => {
+  chrome.tabs.create({ url: 'https://grok.com' });
+  document.getElementById('noApiBanner').classList.add('hidden');
 });
 
 // -----------------------------------------------------------------------
 // Initialization
 // -----------------------------------------------------------------------
 async function init() {
-  const settings = await chrome.storage.sync.get({ apiKey: '', defaultVideoCount: 5, defaultDuration: 30, defaultStyle: 'educational', colorTheme: 'dark-purple' });
+  const settings = await chrome.storage.sync.get({
+    defaultVideoCount: 5,
+    defaultDuration: 30,
+    defaultStyle: 'educational',
+    colorTheme: 'dark-purple',
+    includeHashtags: 'yes',
+  });
   state.settings = settings;
-
-  // Show no-API banner if needed
-  if (!settings.apiKey) {
-    document.getElementById('noApiBanner').classList.remove('hidden');
-  }
 
   // Apply saved defaults
   videoCountSlider.value = settings.defaultVideoCount;
@@ -397,6 +394,22 @@ async function init() {
   setToggleVal('videoDuration', String(settings.defaultDuration));
   setToggleVal('videoStyle', settings.defaultStyle);
   setToggleVal('colorTheme', settings.colorTheme);
+  setToggleVal('hashtagToggle', settings.includeHashtags);
+
+  // Check if grok.com is open; show banner if not
+  const tabs = await chrome.tabs.query({ url: 'https://grok.com/*' });
+  if (tabs.length === 0) {
+    document.getElementById('noApiBanner').classList.remove('hidden');
+  }
+
+  // Pre-fill topic from context menu if set
+  const session = await chrome.storage.session.get({ pendingTopic: '' });
+  if (session.pendingTopic) {
+    topicInput.value = session.pendingTopic;
+    charCount.textContent = session.pendingTopic.length;
+    document.getElementById('step1Next').disabled = session.pendingTopic.length < 5;
+    chrome.storage.session.remove('pendingTopic');
+  }
 
   goToStep(1);
 }

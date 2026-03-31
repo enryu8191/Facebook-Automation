@@ -1,168 +1,166 @@
 /**
- * Grok API client for xAI
- * Compatible with the OpenAI chat completions API format
+ * Grok Web Bridge
+ * Instead of an API key, this module sends a message to the background
+ * service worker which opens grok.com, injects the prompt via a content
+ * script, waits for the full response, then returns the text.
+ *
+ * No API key required — just a logged-in Grok session.
  */
-
-const GROK_API_BASE = 'https://api.x.ai/v1';
 
 /**
  * @typedef {Object} VideoScript
- * @property {string} title         - Short punchy title (3-6 words)
- * @property {string} hook          - Opening hook sentence (grabs attention in 3s)
- * @property {string[]} scenes      - Array of scene text segments (2-4 words each)
- * @property {string} narration     - Full narration text for the video
- * @property {string} callToAction  - Closing CTA ("Follow for more...", "Try this today...")
- * @property {string[]} hashtags    - 5-8 relevant hashtags (without #)
- * @property {string} emoji         - Single representative emoji
- * @property {string} bgKeyword     - Background visual keyword (e.g. "cosmos", "city", "forest")
+ * @property {string} title
+ * @property {string} hook
+ * @property {string[]} scenes
+ * @property {string} narration
+ * @property {string} callToAction
+ * @property {string[]} hashtags
+ * @property {string} emoji
+ * @property {string} bgKeyword
  */
 
 /**
  * @typedef {Object} VideoSeries
- * @property {string} seriesTitle   - Overall series title
- * @property {string} description   - Series description
- * @property {VideoScript[]} videos - Array of individual video scripts
+ * @property {string} seriesTitle
+ * @property {string} description
+ * @property {VideoScript[]} videos
  */
 
 /**
- * Call the Grok API
- * @param {string} apiKey
- * @param {string} model
- * @param {Object[]} messages
- * @param {Object} opts
- * @returns {Promise<string>}
+ * Ask Grok a question via the browser bridge.
+ * Sends a message to background.js which controls the Grok tab.
+ *
+ * @param {string} prompt
+ * @param {function} onProgress  optional (0-100)
+ * @returns {Promise<string>}    raw text response from Grok
  */
-export async function callGrok(apiKey, model, messages, opts = {}) {
-  const resp = await fetch(`${GROK_API_BASE}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature: opts.temperature ?? 0.85,
-      max_tokens: opts.maxTokens ?? 4096,
-      ...opts.extra,
-    }),
-  });
+export async function askGrokViaBrowser(prompt, onProgress) {
+  return new Promise((resolve, reject) => {
+    onProgress?.(5);
 
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(
-      `Grok API error ${resp.status}: ${err.error?.message || resp.statusText}`
+    chrome.runtime.sendMessage(
+      { type: 'GROK_PROMPT', prompt },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          return reject(new Error(chrome.runtime.lastError.message));
+        }
+        if (response?.error) {
+          return reject(new Error(response.error));
+        }
+        onProgress?.(80);
+        resolve(response?.text ?? '');
+      }
     );
-  }
-
-  const data = await resp.json();
-  return data.choices[0].message.content;
+  });
 }
 
 /**
- * Generate a complete video series using Grok
+ * Generate a complete video series by prompting Grok via its web UI.
+ *
  * @param {Object} params
- * @param {string} params.apiKey
- * @param {string} params.model
- * @param {string} params.topic         - User's topic/idea
- * @param {string} params.audience      - Target audience
- * @param {number} params.videoCount    - Number of videos to generate
- * @param {number} params.duration      - Duration per video (seconds)
- * @param {string} params.style         - Video style (educational, motivational, etc.)
- * @param {string} params.language      - Language code
+ * @param {string} params.topic
+ * @param {string} params.audience
+ * @param {number} params.videoCount
+ * @param {number} params.duration      seconds per video
+ * @param {string} params.style
+ * @param {string} params.language
  * @param {boolean} params.includeHashtags
- * @param {function} params.onProgress  - Progress callback (0-100)
+ * @param {function} params.onProgress
  * @returns {Promise<VideoSeries>}
  */
 export async function generateVideoSeries(params) {
   const {
-    apiKey, model, topic, audience, videoCount,
-    duration, style, language, includeHashtags, onProgress,
+    topic, audience, videoCount, duration,
+    style, language, includeHashtags, onProgress,
   } = params;
 
-  onProgress?.(5);
-
   const styleGuide = {
-    educational: 'informative, fact-based, teaches something new in each video',
-    motivational: 'inspiring, uplifting, energetic, pushes the viewer to take action',
+    educational:  'informative, fact-based, teaches something new in each video',
+    motivational: 'inspiring, uplifting, energetic, pushes viewer to take action',
     storytelling: 'narrative-driven, emotional, builds a story arc across videos',
-    tutorial: 'step-by-step, practical, actionable, shows exactly how to do something',
-    entertainment: 'funny, engaging, surprising, keeps viewer hooked with humor or shock',
+    tutorial:     'step-by-step, practical, actionable, shows exactly how to do it',
+    entertainment:'funny, engaging, surprising, keeps viewer hooked with humor or shock',
   }[style] || 'engaging and informative';
 
   const languageNote = language !== 'en'
     ? `Write all content in ${language} language.`
     : '';
 
-  const prompt = `You are a viral short-form video script writer specializing in TikTok/Reels content.
+  const hashtagNote = includeHashtags
+    ? `"hashtags": ["tag1","tag2","tag3","tag4","tag5"]`
+    : `"hashtags": []`;
 
-Create a series of ${videoCount} short videos (each ~${duration} seconds) about: "${topic}"
+  const prompt =
+`You are a viral short-form video script writer for TikTok/Reels.
+
+Create a series of ${videoCount} short videos (~${duration}s each) about: "${topic}"
 Target audience: ${audience || 'general social media users'}
 Style: ${styleGuide}
 ${languageNote}
 
-Each video should be a standalone piece that can also work as part of a series.
+IMPORTANT: Reply with ONLY a valid JSON object, no markdown, no explanation, no code fences.
 
-Return ONLY a valid JSON object in this exact format (no markdown, no explanation):
 {
-  "seriesTitle": "The overall series title (punchy, 4-7 words)",
-  "description": "1-2 sentence series description",
+  "seriesTitle": "punchy series title (4-7 words)",
+  "description": "1-2 sentence description",
   "videos": [
     {
-      "title": "Short punchy title (3-6 words)",
-      "hook": "Opening hook sentence that grabs attention in the first 3 seconds. End with a question or surprising statement.",
+      "title": "short punchy title (3-6 words)",
+      "hook": "grabbing opening sentence — surprising or asks a question",
       "scenes": [
-        "Scene 1 text (5-10 words shown on screen)",
-        "Scene 2 text",
-        "Scene 3 text",
-        "Scene 4 text"
+        "scene 1 on-screen text (5-10 words)",
+        "scene 2 on-screen text",
+        "scene 3 on-screen text",
+        "scene 4 on-screen text"
       ],
-      "narration": "Full narration text for the video (${Math.round(duration * 2.5)} words approx). Write as if speaking to camera.",
-      "callToAction": "Closing call-to-action (1 sentence)",
-      "hashtags": ${includeHashtags ? '["hashtag1", "hashtag2", "hashtag3", "hashtag4", "hashtag5"]' : '[]'},
+      "narration": "full spoken narration (~${Math.round(duration * 2.5)} words)",
+      "callToAction": "closing CTA sentence",
+      ${hashtagNote},
       "emoji": "🎯",
       "bgKeyword": "abstract"
     }
   ]
 }
 
-Make each video unique with a different angle on the topic. Use powerful hooks, concrete examples, and clear takeaways.`;
+Make ${videoCount} unique videos with different angles. Use powerful hooks and clear takeaways.`;
 
-  onProgress?.(15);
+  onProgress?.(10);
 
-  const raw = await callGrok(apiKey, model, [
-    { role: 'system', content: 'You are a viral video content creator. Always respond with valid JSON only, no markdown or extra text.' },
-    { role: 'user', content: prompt },
-  ], { temperature: 0.8, maxTokens: 6000 });
-
-  onProgress?.(70);
-
-  // Parse and validate the response
-  let series;
-  try {
-    // Strip potential markdown code fences
-    const cleaned = raw.replace(/^```(?:json)?\s*/m, '').replace(/\s*```\s*$/m, '').trim();
-    series = JSON.parse(cleaned);
-  } catch (e) {
-    throw new Error(`Failed to parse Grok response as JSON. Raw: ${raw.slice(0, 200)}`);
-  }
-
-  if (!series.videos || !Array.isArray(series.videos)) {
-    throw new Error('Invalid response structure from Grok API');
-  }
-
-  // Normalize / fill defaults for any missing fields
-  series.videos = series.videos.map((v, i) => ({
-    title: v.title || `Video ${i + 1}`,
-    hook: v.hook || '',
-    scenes: Array.isArray(v.scenes) ? v.scenes : [],
-    narration: v.narration || '',
-    callToAction: v.callToAction || 'Follow for more!',
-    hashtags: Array.isArray(v.hashtags) ? v.hashtags : [],
-    emoji: v.emoji || '🎬',
-    bgKeyword: v.bgKeyword || 'abstract',
-  }));
+  const raw = await askGrokViaBrowser(prompt, p => onProgress?.(10 + p * 0.7));
 
   onProgress?.(85);
+
+  // Parse JSON — strip any accidental markdown fences Grok might add
+  let series;
+  try {
+    const cleaned = raw
+      .replace(/^```(?:json)?\s*/m, '')
+      .replace(/\s*```\s*$/m, '')
+      .trim();
+    series = JSON.parse(cleaned);
+  } catch {
+    // Try extracting a JSON block from the response
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error('Grok did not return valid JSON. Try again.');
+    series = JSON.parse(match[0]);
+  }
+
+  if (!Array.isArray(series.videos)) {
+    throw new Error('Unexpected response format from Grok. Please try again.');
+  }
+
+  // Normalize
+  series.videos = series.videos.slice(0, videoCount).map((v, i) => ({
+    title:        v.title        || `Video ${i + 1}`,
+    hook:         v.hook         || '',
+    scenes:       Array.isArray(v.scenes) ? v.scenes : [],
+    narration:    v.narration    || '',
+    callToAction: v.callToAction || 'Follow for more!',
+    hashtags:     Array.isArray(v.hashtags) ? v.hashtags : [],
+    emoji:        v.emoji        || '🎬',
+    bgKeyword:    v.bgKeyword    || 'abstract',
+  }));
+
+  onProgress?.(100);
   return series;
 }
