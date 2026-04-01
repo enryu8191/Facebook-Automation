@@ -1,168 +1,259 @@
 /**
- * Grok API client for xAI
- * Compatible with the OpenAI chat completions API format
+ * Grok Web Bridge — Script generation + Grok Imagine image generation
+ *
+ * No API key. Communicates via background.js → content/grok-bridge.js
+ * which controls the live grok.com tab.
  */
 
-const GROK_API_BASE = 'https://api.x.ai/v1';
+// ─────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────
+
+/**
+ * @typedef {Object} Scene
+ * @property {number} index
+ * @property {string} narration        Scene description for creator reference
+ * @property {string} imagePrompt      Prompt sent to Grok Imagine
+ * @property {string} [imageDataUrl]   Base64 data URL once image is generated
+ * @property {number} duration         Seconds this scene plays
+ */
 
 /**
  * @typedef {Object} VideoScript
- * @property {string} title         - Short punchy title (3-6 words)
- * @property {string} hook          - Opening hook sentence (grabs attention in 3s)
- * @property {string[]} scenes      - Array of scene text segments (2-4 words each)
- * @property {string} narration     - Full narration text for the video
- * @property {string} callToAction  - Closing CTA ("Follow for more...", "Try this today...")
- * @property {string[]} hashtags    - 5-8 relevant hashtags (without #)
- * @property {string} emoji         - Single representative emoji
- * @property {string} bgKeyword     - Background visual keyword (e.g. "cosmos", "city", "forest")
+ * @property {string}  title
+ * @property {string}  hook             Opening text (shown before scene 1)
+ * @property {Scene[]} scenes
+ * @property {string}  outro            Closing caption / CTA
+ * @property {string[]} hashtags
+ * @property {string}  episode          e.g. "Episode 1" or "" for single video
  */
 
 /**
- * @typedef {Object} VideoSeries
- * @property {string} seriesTitle   - Overall series title
- * @property {string} description   - Series description
- * @property {VideoScript[]} videos - Array of individual video scripts
+ * @typedef {Object} StoryProject
+ * @property {string}        seriesTitle   "" for single video
+ * @property {string}        description
+ * @property {VideoScript[]} videos
  */
+
+// ─────────────────────────────────────────────────────────
+// Low-level bridge helpers
+// ─────────────────────────────────────────────────────────
 
 /**
- * Call the Grok API
- * @param {string} apiKey
- * @param {string} model
- * @param {Object[]} messages
- * @param {Object} opts
- * @returns {Promise<string>}
+ * Send a text prompt to Grok via the content script bridge.
+ * Returns the full text response.
  */
-export async function callGrok(apiKey, model, messages, opts = {}) {
-  const resp = await fetch(`${GROK_API_BASE}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature: opts.temperature ?? 0.85,
-      max_tokens: opts.maxTokens ?? 4096,
-      ...opts.extra,
-    }),
-  });
-
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(
-      `Grok API error ${resp.status}: ${err.error?.message || resp.statusText}`
+export function askGrok(prompt) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      { type: 'GROK_PROMPT', prompt, expectImage: false },
+      (res) => {
+        if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+        if (res?.error) return reject(new Error(res.error));
+        resolve(res?.text ?? '');
+      }
     );
-  }
-
-  const data = await resp.json();
-  return data.choices[0].message.content;
+  });
 }
 
 /**
- * Generate a complete video series using Grok
- * @param {Object} params
- * @param {string} params.apiKey
- * @param {string} params.model
- * @param {string} params.topic         - User's topic/idea
- * @param {string} params.audience      - Target audience
- * @param {number} params.videoCount    - Number of videos to generate
- * @param {number} params.duration      - Duration per video (seconds)
- * @param {string} params.style         - Video style (educational, motivational, etc.)
- * @param {string} params.language      - Language code
- * @param {boolean} params.includeHashtags
- * @param {function} params.onProgress  - Progress callback (0-100)
- * @returns {Promise<VideoSeries>}
+ * Send an image generation prompt to Grok Imagine.
+ * Returns a data URL of the first generated image.
  */
-export async function generateVideoSeries(params) {
+export function askGrokImagine(imagePrompt) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      { type: 'GROK_PROMPT', prompt: imagePrompt, expectImage: true },
+      (res) => {
+        if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+        if (res?.error) return reject(new Error(res.error));
+        resolve(res?.imageDataUrl ?? null);
+      }
+    );
+  });
+}
+
+// ─────────────────────────────────────────────────────────
+// Script generation
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Build the art-style suffix appended to every image prompt.
+ */
+function buildStyleSuffix(artStyle, mood, shotType) {
+  const styleMap = {
+    cinematic:    'cinematic photography, film grain, anamorphic lens',
+    anime:        'anime illustration, Studio Ghibli style, detailed',
+    cartoon:      'vibrant cartoon illustration, bold outlines',
+    realistic:    'ultra-realistic photography, hyperdetailed, 8K',
+    oil_painting: 'oil painting, thick brushstrokes, museum quality',
+    watercolor:   'soft watercolor illustration, delicate washes',
+    pixel_art:    'pixel art, 16-bit, retro game aesthetic',
+    dark_fantasy: 'dark fantasy concept art, dramatic, detailed',
+    lofi:         'lo-fi aesthetic, cozy, warm tones, illustrated',
+  };
+  const moodMap = {
+    dramatic: 'dramatic lighting, high contrast',
+    soft:     'soft diffused lighting, pastel tones',
+    dark:     'dark moody atmosphere, deep shadows',
+    vibrant:  'vibrant saturated colors, energetic',
+    golden:   'golden hour lighting, warm glow',
+    neon:     'neon lights, cyberpunk palette',
+  };
+  const shotMap = {
+    closeup: 'extreme close-up shot',
+    wide:    'wide establishing shot',
+    pov:     'first-person POV shot',
+    aerial:  'aerial bird\'s eye view',
+    varied:  '',
+  };
+
+  return [styleMap[artStyle], moodMap[mood], shotMap[shotType]]
+    .filter(Boolean).join(', ');
+}
+
+/**
+ * Generate the full project (scripts for all videos) in one Grok call.
+ *
+ * @param {Object} params
+ * @param {string}   params.story
+ * @param {string}   params.format         'single' | 'series'
+ * @param {number}   params.episodeCount   ignored when format=single
+ * @param {number}   params.sceneCount     scenes per video
+ * @param {string}   params.artStyle
+ * @param {string}   params.mood
+ * @param {string}   params.shotType
+ * @param {function} params.onProgress
+ * @returns {Promise<StoryProject>}
+ */
+export async function generateScripts(params) {
   const {
-    apiKey, model, topic, audience, videoCount,
-    duration, style, language, includeHashtags, onProgress,
+    story, format, episodeCount, sceneCount,
+    artStyle, mood, shotType, onProgress,
   } = params;
+
+  const isSeries  = format === 'series';
+  const numVideos = isSeries ? episodeCount : 1;
+  const styleSuffix = buildStyleSuffix(artStyle, mood, shotType);
 
   onProgress?.(5);
 
-  const styleGuide = {
-    educational: 'informative, fact-based, teaches something new in each video',
-    motivational: 'inspiring, uplifting, energetic, pushes the viewer to take action',
-    storytelling: 'narrative-driven, emotional, builds a story arc across videos',
-    tutorial: 'step-by-step, practical, actionable, shows exactly how to do something',
-    entertainment: 'funny, engaging, surprising, keeps viewer hooked with humor or shock',
-  }[style] || 'engaging and informative';
+  const prompt =
+`You are a short-form video director for TikTok/Reels.
 
-  const languageNote = language !== 'en'
-    ? `Write all content in ${language} language.`
-    : '';
+Create ${numVideos === 1 ? 'a single short video' : `a ${numVideos}-episode short video series`} based on this idea:
+"${story}"
 
-  const prompt = `You are a viral short-form video script writer specializing in TikTok/Reels content.
+${isSeries ? 'Each episode should be a self-contained story beat that builds into a complete arc across all episodes.' : ''}
 
-Create a series of ${videoCount} short videos (each ~${duration} seconds) about: "${topic}"
-Target audience: ${audience || 'general social media users'}
-Style: ${styleGuide}
-${languageNote}
+For EACH video, write ${sceneCount} scenes. Each scene needs:
+- A narration line (what the viewer hears, 1-2 sentences, for the creator's reference)
+- An imagePrompt (a vivid visual description for Grok Imagine — be very specific about characters, setting, action, style: "${styleSuffix}")
+- A duration in seconds (4-8s per scene)
 
-Each video should be a standalone piece that can also work as part of a series.
+Note: there are NO on-screen captions — the video is purely visual images. The creator will add their own captions and audio later.
 
-Return ONLY a valid JSON object in this exact format (no markdown, no explanation):
+Reply with ONLY valid JSON, no markdown, no explanation:
+
 {
-  "seriesTitle": "The overall series title (punchy, 4-7 words)",
-  "description": "1-2 sentence series description",
+  "seriesTitle": "${isSeries ? 'series title here' : ''}",
+  "description": "one sentence description",
   "videos": [
     {
-      "title": "Short punchy title (3-6 words)",
-      "hook": "Opening hook sentence that grabs attention in the first 3 seconds. End with a question or surprising statement.",
+      "title": "video title",
+      "episode": "${isSeries ? 'Episode 1' : ''}",
       "scenes": [
-        "Scene 1 text (5-10 words shown on screen)",
-        "Scene 2 text",
-        "Scene 3 text",
-        "Scene 4 text"
+        {
+          "index": 0,
+          "narration": "what happens in this scene (for creator reference)",
+          "imagePrompt": "detailed visual description for Grok Imagine, ${styleSuffix}",
+          "duration": 5
+        }
       ],
-      "narration": "Full narration text for the video (${Math.round(duration * 2.5)} words approx). Write as if speaking to camera.",
-      "callToAction": "Closing call-to-action (1 sentence)",
-      "hashtags": ${includeHashtags ? '["hashtag1", "hashtag2", "hashtag3", "hashtag4", "hashtag5"]' : '[]'},
-      "emoji": "🎯",
-      "bgKeyword": "abstract"
+      "hashtags": ["tag1", "tag2", "tag3", "tag4", "tag5"]
     }
   ]
-}
+}`;
 
-Make each video unique with a different angle on the topic. Use powerful hooks, concrete examples, and clear takeaways.`;
+  const raw = await askGrok(prompt);
+  onProgress?.(60);
 
-  onProgress?.(15);
-
-  const raw = await callGrok(apiKey, model, [
-    { role: 'system', content: 'You are a viral video content creator. Always respond with valid JSON only, no markdown or extra text.' },
-    { role: 'user', content: prompt },
-  ], { temperature: 0.8, maxTokens: 6000 });
-
-  onProgress?.(70);
-
-  // Parse and validate the response
-  let series;
+  // Parse JSON
+  let project;
   try {
-    // Strip potential markdown code fences
     const cleaned = raw.replace(/^```(?:json)?\s*/m, '').replace(/\s*```\s*$/m, '').trim();
-    series = JSON.parse(cleaned);
-  } catch (e) {
-    throw new Error(`Failed to parse Grok response as JSON. Raw: ${raw.slice(0, 200)}`);
+    project = JSON.parse(cleaned);
+  } catch {
+    const match = raw.match(/\{[\s\S]*"videos"[\s\S]*\}/);
+    if (!match) throw new Error('Grok returned an unexpected format. Please try again.');
+    project = JSON.parse(match[0]);
   }
 
-  if (!series.videos || !Array.isArray(series.videos)) {
-    throw new Error('Invalid response structure from Grok API');
+  if (!Array.isArray(project.videos) || project.videos.length === 0) {
+    throw new Error('No videos returned. Try rephrasing your idea.');
   }
 
-  // Normalize / fill defaults for any missing fields
-  series.videos = series.videos.map((v, i) => ({
-    title: v.title || `Video ${i + 1}`,
-    hook: v.hook || '',
-    scenes: Array.isArray(v.scenes) ? v.scenes : [],
-    narration: v.narration || '',
-    callToAction: v.callToAction || 'Follow for more!',
+  // Normalize
+  project.videos = project.videos.map((v, vi) => ({
+    title:    v.title   || `Video ${vi + 1}`,
+    episode:  v.episode || '',
     hashtags: Array.isArray(v.hashtags) ? v.hashtags : [],
-    emoji: v.emoji || '🎬',
-    bgKeyword: v.bgKeyword || 'abstract',
+    scenes:   (v.scenes || []).slice(0, sceneCount).map((s, si) => ({
+      index:        si,
+      narration:    s.narration   || '',
+      imagePrompt:  s.imagePrompt || `${story}, scene ${si + 1}, ${styleSuffix}`,
+      duration:     Number(s.duration) || 5,
+      imageDataUrl: null,
+    })),
   }));
 
-  onProgress?.(85);
-  return series;
+  onProgress?.(75);
+  return project;
+}
+
+// ─────────────────────────────────────────────────────────
+// Image generation — one scene at a time
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Generate the image for a single scene via Grok Imagine.
+ * Updates scene.imageDataUrl in-place and calls onImage callback.
+ *
+ * @param {Scene}    scene
+ * @param {function} onImage  (scene) => void  called when image arrives
+ */
+export async function generateSceneImage(scene, onImage) {
+  try {
+    const dataUrl = await askGrokImagine(scene.imagePrompt);
+    if (dataUrl) {
+      scene.imageDataUrl = dataUrl;
+      onImage?.(scene);
+    }
+  } catch (err) {
+    // Non-fatal: scene will render with gradient fallback
+    console.warn(`Image generation failed for scene ${scene.index}:`, err.message);
+    scene.imageDataUrl = null;
+    onImage?.(scene);
+  }
+}
+
+/**
+ * Generate images for every scene across all videos, sequentially.
+ * Calls onProgress and onSceneImage for each result.
+ *
+ * @param {StoryProject} project
+ * @param {function}     onProgress    (0-100)
+ * @param {function}     onSceneImage  (videoIndex, scene)
+ */
+export async function generateAllImages(project, onProgress, onSceneImage) {
+  const allScenes = project.videos.flatMap((v, vi) =>
+    v.scenes.map(s => ({ scene: s, vi }))
+  );
+  const total = allScenes.length;
+
+  for (let i = 0; i < total; i++) {
+    const { scene, vi } = allScenes[i];
+    await generateSceneImage(scene, (s) => onSceneImage?.(vi, s));
+    onProgress?.(Math.round(((i + 1) / total) * 100));
+  }
 }

@@ -1,22 +1,20 @@
 {
   "manifest_version": 3,
   "name": "Grok Video Series Generator",
-  "version": "1.0.0",
-  "description": "Generate TikTok-style short video series using Grok AI — create scripts, visuals, and export videos automatically.",
+  "version": "1.1.0",
+  "description": "Generate TikTok-style short video series using Grok AI — no API key needed, just log into grok.com.",
   "permissions": [
     "storage",
+    "tabs",
+    "scripting",
+    "contextMenus",
     "activeTab"
   ],
   "host_permissions": [
-    "https://api.x.ai/*"
+    "https://grok.com/*"
   ],
   "action": {
-    "default_popup": "popup/popup.html",
-    "default_icon": {
-      "16": "icons/icon16.png",
-      "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
-    }
+    "default_popup": "popup/popup.html"
   },
   "options_ui": {
     "page": "options/options.html",
@@ -26,11 +24,13 @@
     "service_worker": "background/background.js",
     "type": "module"
   },
-  "icons": {
-    "16": "icons/icon16.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
-  },
+  "content_scripts": [
+    {
+      "matches": ["https://grok.com/*"],
+      "js": ["content/grok-bridge.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
   }

@@ -1,16 +1,23 @@
 # Grok Video Series Generator — Chrome Extension
 
-Generate TikTok/Reels-style short video series using **Grok AI** (xAI) directly from your browser. Input a topic, choose a style, and get a fully rendered, downloadable video series in seconds.
+Generate TikTok/Reels-style short video series using **Grok AI** — directly through the Grok website. **No API key required.** Just log in to grok.com and the extension handles everything automatically.
+
+---
+
+## How It Works
+
+The extension opens grok.com in a tab, automatically types your prompt into Grok's chat, waits for the full response, then uses it to render animated short-form videos — all in your browser.
 
 ---
 
 ## Features
 
+- **No API key** — Uses your existing grok.com login via browser automation
 - **AI-powered scripts** — Grok generates hooks, scene text, narration, and hashtags
 - **Canvas video rendering** — Animated short-form videos rendered in-browser using Canvas 2D + MediaRecorder
 - **Multiple themes** — Dark Purple, Dark Blue, Sunset, Forest, Neon, Minimal
 - **Text animations** — Fade, Slide, Typewriter, Bounce
-- **4 video styles** — Educational, Motivational, Storytelling, Tutorial, Entertainment
+- **5 video styles** — Educational, Motivational, Storytelling, Tutorial, Entertainment
 - **Flexible durations** — 15s, 30s, 45s, 60s per video
 - **Batch export** — Download all videos or select individual ones
 - **Script clipboard** — Copy all scripts as formatted text
@@ -47,10 +54,11 @@ Move the downloaded `icon16.png`, `icon48.png`, `icon128.png` into the `icons/` 
 
 ## Setup
 
-1. Click the extension icon → click **⚙ Settings**
-2. Enter your **xAI API key** from [console.x.ai](https://console.x.ai)
-3. Click **Test** to verify the key
-4. Click **Save Settings**
+1. Open [grok.com](https://grok.com) and **log in** with your X account
+2. Keep the grok.com tab open
+3. Click the extension icon and start generating!
+
+No API keys, no configuration needed.
 
 ---
 
@@ -58,7 +66,7 @@ Move the downloaded `icon16.png`, `icon48.png`, `icon128.png` into the `icons/` 
 
 1. **Topic** — Describe your video series idea (e.g. "5 science facts that will blow your mind")
 2. **Style** — Pick video style, duration, color theme, and animation type
-3. **Generate** — Grok writes the scripts; videos render in your browser
+3. **Generate** — The extension auto-prompts Grok; videos render in your browser
 4. **Export** — Download individual `.webm` videos or copy scripts to clipboard
 
 ---
@@ -100,22 +108,47 @@ Move the downloaded `icon16.png`, `icon48.png`, `icon128.png` into the `icons/` 
 
 ---
 
-## Grok API
+## Architecture
 
-Uses the [xAI API](https://docs.x.ai) which is OpenAI-compatible:
-- Base URL: `https://api.x.ai/v1`
-- Models: `grok-3-latest`, `grok-3-mini-latest`, `grok-2-latest`
-- Single API call generates all video scripts as structured JSON
+```
+├── manifest.json           # Chrome Extension Manifest V3
+├── popup/
+│   ├── popup.html          # 4-step UI (Topic → Style → Generate → Export)
+│   ├── popup.css           # Dark UI styles
+│   └── popup.js            # Step controller, state management
+├── options/
+│   ├── options.html        # Settings page (no API key needed)
+│   └── options.js          # Defaults config + Grok tab status check
+├── background/
+│   └── background.js       # Service worker: tab management, message relay
+├── content/
+│   └── grok-bridge.js      # Content script on grok.com: injects prompts, extracts responses
+├── utils/
+│   ├── grok-api.js         # Prompt builder + JSON parser
+│   └── video-renderer.js   # Canvas 2D video renderer + MediaRecorder export
+└── icons/
+```
 
----
+## Browser Automation Flow
+
+1. **Popup** → background: `GROK_PROMPT { prompt }`
+2. **Background** → finds/opens grok.com tab, verifies content script loaded
+3. **Background** → content script: `INJECT_PROMPT { prompt }`
+4. **Content script** → sets textarea value, submits form, watches for response
+5. **Content script** → background: response text (JSON)
+6. **Background** → popup: response text
+7. **Popup** → parses JSON, renders Canvas videos, offers download
 
 ## Permissions
 
 | Permission | Reason |
 |---|---|
-| `storage` | Save API key and preferences |
-| `activeTab` | Read page title for context menu feature |
-| `host_permissions: api.x.ai` | Call the Grok API |
+| `storage` | Save preferences |
+| `tabs` | Find/open grok.com tab |
+| `scripting` | Inject content script into pre-existing grok.com tabs |
+| `contextMenus` | Right-click "Generate video series about this" |
+| `activeTab` | Read page title for context menu |
+| `host_permissions: grok.com` | Run content script on grok.com |
 
 ---
 

@@ -1,88 +1,149 @@
 /**
- * Background service worker for Grok Video Series Generator
- * Handles extension lifecycle, context menu, and inter-tab messaging.
+ * Background Service Worker
+ *
+ * Key design decisions:
+ *  - grok.com tab is NEVER brought to focus (so popup stays open)
+ *  - Progress is written to chrome.storage.session so popup can read it
+ *  - Image generation loops through scenes one at a time via content script
  */
 
-// -----------------------------------------------------------------------
-// Install / update lifecycle
-// -----------------------------------------------------------------------
+const GROK_URL = 'https://grok.com';
+let grokTabId  = null;
+
+// ─────────────────────────────────────────────────────
+// Install
+// ─────────────────────────────────────────────────────
 chrome.runtime.onInstalled.addListener(({ reason }) => {
   if (reason === 'install') {
-    // Open the options page on first install to prompt for API key
-    chrome.tabs.create({ url: chrome.runtime.getURL('options/options.html') });
+    // Open grok.com on first install so user can log in
+    chrome.tabs.create({ url: GROK_URL });
   }
-});
 
-// -----------------------------------------------------------------------
-// Context menu: "Generate video series about this page"
-// -----------------------------------------------------------------------
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus?.create({
-    id: 'grok-video-from-page',
-    title: 'Generate Grok video series about this page',
-    contexts: ['page', 'selection'],
+  chrome.contextMenus.create({
+    id: 'grok-video-page',
+    title: 'Make a Grok video about this page',
+    contexts: ['page'],
+  });
+  chrome.contextMenus.create({
+    id: 'grok-video-selection',
+    title: 'Make a Grok video about "%s"',
+    contexts: ['selection'],
   });
 });
 
-chrome.contextMenus?.onClicked.addListener((info, tab) => {
-  if (info.menuItemId !== 'grok-video-from-page') return;
-
-  const topic = info.selectionText
-    ? info.selectionText.slice(0, 200)
-    : tab.title || 'this topic';
-
-  // Store topic so popup can read it on open
-  chrome.storage.session.set({ pendingTopic: topic });
-  chrome.action.openPopup?.();
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  const topic =
+    info.menuItemId === 'grok-video-selection'
+      ? info.selectionText?.slice(0, 300)
+      : tab.title || '';
+  if (topic) chrome.storage.session.set({ pendingTopic: topic });
 });
 
-// -----------------------------------------------------------------------
-// Message passing: relay API requests from popup (CSP-friendly fallback)
-// -----------------------------------------------------------------------
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg.type === 'GROK_API_REQUEST') {
-    handleGrokRequest(msg.payload).then(sendResponse).catch(err => {
-      sendResponse({ error: err.message });
-    });
-    return true; // async
+// ─────────────────────────────────────────────────────
+// Message handler
+// ─────────────────────────────────────────────────────
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'BRIDGE_READY') {
+    if (sender.tab?.id) grokTabId = sender.tab.id;
+    return;
   }
 
-  if (msg.type === 'PING') {
-    sendResponse({ pong: true });
+  if (msg.type === 'GROK_PROMPT') {
+    handlePrompt(msg.prompt, msg.expectImage ?? false)
+      .then(result => sendResponse(result))
+      .catch(err   => sendResponse({ error: err.message }));
+    return true; // keep channel open for async response
   }
 });
 
-async function handleGrokRequest({ apiKey, model, messages, options = {} }) {
-  const resp = await fetch('https://api.x.ai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature: options.temperature ?? 0.85,
-      max_tokens: options.maxTokens ?? 4096,
-    }),
+// ─────────────────────────────────────────────────────
+// Core: send a prompt to the Grok content script
+// ─────────────────────────────────────────────────────
+async function handlePrompt(prompt, expectImage) {
+  const tabId = await getOrCreateGrokTab();
+  await ensureContentScript(tabId);
+  await sleep(800);
+
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(
+      tabId,
+      { type: 'INJECT_PROMPT', prompt, expectImage },
+      (res) => {
+        if (chrome.runtime.lastError) {
+          return reject(new Error(
+            'Could not reach Grok. Make sure grok.com is open and you are logged in.'
+          ));
+        }
+        if (res?.error) return reject(new Error(res.error));
+        resolve(res);
+      }
+    );
   });
-
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(`Grok API ${resp.status}: ${err.error?.message || resp.statusText}`);
-  }
-
-  return resp.json();
 }
 
-// -----------------------------------------------------------------------
-// Badge: show number of pending renders
-// -----------------------------------------------------------------------
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'session') return;
-  if ('renderCount' in changes) {
-    const count = changes.renderCount.newValue;
-    chrome.action.setBadgeText({ text: count > 0 ? String(count) : '' });
-    chrome.action.setBadgeBackgroundColor({ color: '#7c3aed' });
+// ─────────────────────────────────────────────────────
+// Tab management — NEVER activate the tab so popup stays open
+// ─────────────────────────────────────────────────────
+async function getOrCreateGrokTab() {
+  // 1. Reuse cached tab if still valid
+  if (grokTabId != null) {
+    try {
+      const tab = await chrome.tabs.get(grokTabId);
+      if (tab?.url?.startsWith(GROK_URL)) return grokTabId;
+    } catch {
+      grokTabId = null;
+    }
   }
+
+  // 2. Find any existing grok.com tab (don't activate it)
+  const tabs = await chrome.tabs.query({ url: 'https://grok.com/*' });
+  if (tabs.length > 0) {
+    grokTabId = tabs[0].id;
+    return grokTabId;
+  }
+
+  // 3. Open a new background tab (active: false keeps popup open)
+  const newTab = await chrome.tabs.create({ url: GROK_URL, active: false });
+  grokTabId = newTab.id;
+  await waitForTabLoad(newTab.id);
+  await sleep(1500); // let Grok's JS fully initialise
+  return grokTabId;
+}
+
+function waitForTabLoad(tabId, timeout = 30_000) {
+  return new Promise(resolve => {
+    const timer = setTimeout(resolve, timeout);
+    function onUpdated(id, info) {
+      if (id === tabId && info.status === 'complete') {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        resolve();
+      }
+    }
+    chrome.tabs.onUpdated.addListener(onUpdated);
+  });
+}
+
+async function ensureContentScript(tabId) {
+  // Ping first
+  const alive = await new Promise(resolve => {
+    chrome.tabs.sendMessage(tabId, { type: 'PING' }, res => {
+      resolve(!chrome.runtime.lastError && res?.pong === true);
+    });
+  });
+
+  if (!alive) {
+    // Inject manually (handles pre-existing tabs)
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content/grok-bridge.js'],
+    });
+    await sleep(800);
+  }
+}
+
+chrome.tabs.onRemoved.addListener(id => {
+  if (id === grokTabId) grokTabId = null;
 });
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }

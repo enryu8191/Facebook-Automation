@@ -1,404 +1,483 @@
-import { generateVideoSeries } from '../utils/grok-api.js';
-import { renderVideo } from '../utils/video-renderer.js';
+import { generateScripts, generateAllImages } from '../utils/grok-api.js';
+import { renderProject } from '../utils/video-renderer.js';
+import { NICHES, getNicheById } from '../utils/niches.js';
 
-// -----------------------------------------------------------------------
+// ─────────────────────────────────────────────────────
 // State
-// -----------------------------------------------------------------------
+// ─────────────────────────────────────────────────────
 const state = {
-  currentStep: 1,
-  settings: null,
-  series: null,           // VideoSeries from Grok
-  blobs: [],              // Rendered video blobs (indexed)
-  renderStatus: [],       // 'queued' | 'rendering' | 'ready'
+  step: 1,
+  project: null,   // StoryProject
+  blobs: [],       // Rendered Blob[] indexed by video
 };
 
-// -----------------------------------------------------------------------
-// Step navigation helpers
-// -----------------------------------------------------------------------
-function goToStep(step) {
-  state.currentStep = step;
-
-  // Update panels
+// ─────────────────────────────────────────────────────
+// Step navigation
+// ─────────────────────────────────────────────────────
+function goToStep(n) {
+  state.step = n;
   document.querySelectorAll('.panel').forEach(p => p.classList.add('hidden'));
-  const panel = document.getElementById(`panel-${step}`);
-  if (panel) panel.classList.remove('hidden');
+  document.getElementById(`panel-${n}`)?.classList.remove('hidden');
 
-  // Update step indicators
   document.querySelectorAll('.step').forEach(el => {
-    const s = parseInt(el.dataset.step);
+    const s = +el.dataset.step;
     el.classList.remove('active', 'completed');
-    if (s < step) el.classList.add('completed');
-    else if (s === step) el.classList.add('active');
+    if (s < n) el.classList.add('completed');
+    else if (s === n) el.classList.add('active');
   });
-
-  document.querySelectorAll('.step-line').forEach((line, i) => {
-    line.classList.toggle('completed', i + 1 < step);
-  });
-}
-
-// -----------------------------------------------------------------------
-// Toggle group helpers
-// -----------------------------------------------------------------------
-function getToggleVal(groupId) {
-  const el = document.querySelector(`#${groupId} .toggle-btn.active`);
-  return el ? el.dataset.val : null;
-}
-
-function setToggleVal(groupId, val) {
-  document.querySelectorAll(`#${groupId} .toggle-btn`).forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.val === val);
+  document.querySelectorAll('.step-line').forEach((l, i) => {
+    l.classList.toggle('completed', i + 1 < n);
   });
 }
 
-document.querySelectorAll('.toggle-group, .theme-grid').forEach(group => {
+// ─────────────────────────────────────────────────────
+// Toggle helpers
+// ─────────────────────────────────────────────────────
+function getToggle(id) {
+  return document.querySelector(`#${id} .active, #${id} [class*="btn"].active`)?.dataset.val ?? null;
+}
+
+function setToggle(id, val) {
+  document.querySelectorAll(`#${id} [data-val]`).forEach(b =>
+    b.classList.toggle('active', b.dataset.val === val)
+  );
+}
+
+// Wire all toggle groups + style grids
+document.querySelectorAll('.toggle-group, .style-grid, .format-cards').forEach(group => {
   group.addEventListener('click', e => {
     const btn = e.target.closest('[data-val]');
     if (!btn) return;
     group.querySelectorAll('[data-val]').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+
+    // Show/hide series episode count
+    if (group.id === 'formatCards') {
+      document.getElementById('seriesCountGroup')
+        .classList.toggle('hidden', btn.dataset.val !== 'series');
+    }
   });
 });
 
-// -----------------------------------------------------------------------
-// Step 1: Topic input
-// -----------------------------------------------------------------------
-const topicInput = document.getElementById('topicInput');
-const audienceInput = document.getElementById('audienceInput');
-const videoCountSlider = document.getElementById('videoCount');
-const charCount = document.getElementById('charCount');
+// ─────────────────────────────────────────────────────
+// Step 1: Story
+// ─────────────────────────────────────────────────────
+const storyInput = document.getElementById('storyInput');
+const charCount  = document.getElementById('charCount');
 
-topicInput.addEventListener('input', () => {
-  const len = topicInput.value.length;
-  charCount.textContent = len;
-  document.getElementById('step1Next').disabled = len < 5 || len > 300;
+storyInput.addEventListener('input', () => {
+  const n = storyInput.value.length;
+  charCount.textContent = n;
+  document.getElementById('step1Next').disabled = n < 10 || n > 500;
 });
 
-videoCountSlider.addEventListener('input', () => {
-  document.getElementById('videoCountVal').textContent =
-    `${videoCountSlider.value} video${videoCountSlider.value > 1 ? 's' : ''}`;
+// Range sliders
+document.getElementById('episodeCount').addEventListener('input', e => {
+  document.getElementById('episodeCountVal').textContent = `${e.target.value} episodes`;
+});
+document.getElementById('sceneCount').addEventListener('input', e => {
+  document.getElementById('sceneCountVal').textContent = `${e.target.value} scenes`;
 });
 
-// Quick idea chips
-document.getElementById('quickIdeas').addEventListener('click', e => {
+// Quick chips
+document.getElementById('quickChips').addEventListener('click', e => {
   const chip = e.target.closest('.chip');
   if (!chip) return;
-  // Strip emoji prefix
-  const idea = chip.textContent.replace(/^\S+\s/, '').trim();
-  topicInput.value = idea;
-  charCount.textContent = idea.length;
+  const text = chip.textContent.replace(/^\S+\s/, '').trim();
+  storyInput.value = text;
+  charCount.textContent = text.length;
   document.getElementById('step1Next').disabled = false;
 });
 
 document.getElementById('step1Next').addEventListener('click', () => goToStep(2));
 
-// -----------------------------------------------------------------------
+// ─────────────────────────────────────────────────────
+// Niche picker
+// ─────────────────────────────────────────────────────
+let activeNiche = 'original'; // default
+
+function selectNiche(id) {
+  activeNiche = id;
+  const niche = getNicheById(id);
+  if (!niche) return;
+
+  // Update card highlight + checkmarks
+  document.querySelectorAll('.niche-card').forEach(card => {
+    const isActive = card.dataset.niche === id;
+    card.classList.toggle('active', isActive);
+    const check = document.getElementById(`ncheck-${card.dataset.niche}`);
+    if (check) check.classList.toggle('hidden', !isActive);
+  });
+
+  if (id === 'original') {
+    // Show text input, hide preset preview
+    document.getElementById('storyInputGroup').classList.remove('hidden');
+    document.getElementById('presetPreview').classList.add('hidden');
+    storyInput.value = '';
+    charCount.textContent = '0';
+    document.getElementById('step1Next').disabled = true;
+  } else {
+    // Hide text input, show preset preview
+    document.getElementById('storyInputGroup').classList.add('hidden');
+    document.getElementById('presetPreview').classList.remove('hidden');
+    document.getElementById('presetPreviewText').textContent = niche.prompt;
+
+    // Auto-fill hidden textarea so generation picks it up
+    storyInput.value = niche.prompt;
+    charCount.textContent = niche.prompt.length;
+    document.getElementById('step1Next').disabled = false;
+
+    // Apply preset style defaults to Step 2
+    setToggle('artStyle',    niche.artStyle);
+    setToggle('mood',        niche.mood);
+    setToggle('shotType',    niche.shotType);
+    setToggle('transition',  niche.transition);
+
+    // Scene count
+    const sceneSlider = document.getElementById('sceneCount');
+    sceneSlider.value = niche.sceneCount;
+    document.getElementById('sceneCountVal').textContent = `${niche.sceneCount} scenes`;
+
+    // Format
+    setToggle('formatCards', niche.format);
+    document.getElementById('seriesCountGroup')
+      .classList.toggle('hidden', niche.format !== 'series');
+  }
+}
+
+// Niche card clicks
+document.getElementById('nicheGrid').addEventListener('click', e => {
+  const card = e.target.closest('.niche-card');
+  if (card) selectNiche(card.dataset.niche);
+});
+
+// "Edit prompt" button — drop back to manual input with preset text pre-filled
+document.getElementById('presetEditBtn').addEventListener('click', () => {
+  document.getElementById('storyInputGroup').classList.remove('hidden');
+  document.getElementById('presetPreview').classList.add('hidden');
+  storyInput.focus();
+  const len = storyInput.value.length;
+  charCount.textContent = len;
+  document.getElementById('step1Next').disabled = len < 10;
+});
+
+// ─────────────────────────────────────────────────────
 // Step 2: Style
-// -----------------------------------------------------------------------
+// ─────────────────────────────────────────────────────
 document.getElementById('step2Back').addEventListener('click', () => goToStep(1));
 document.getElementById('step2Next').addEventListener('click', () => {
   goToStep(3);
-  startGeneration();
+  startCreation();
 });
 
-// -----------------------------------------------------------------------
-// Step 3: Generate
-// -----------------------------------------------------------------------
-async function startGeneration() {
-  const settings = await chrome.storage.sync.get({
-    apiKey: '',
-    grokModel: 'grok-3-latest',
-  });
+// ─────────────────────────────────────────────────────
+// Step 3: Create
+// ─────────────────────────────────────────────────────
 
-  if (!settings.apiKey) {
-    showError('No API key configured. Open Settings to add your xAI API key.');
-    return;
+function setPhase(id, status, subText) {
+  const item = document.getElementById(`phase-${id}`);
+  const badge = document.getElementById(`phase-${id}-status`);
+  const sub   = document.getElementById(`phase-${id}-sub`);
+  if (!item) return;
+
+  item.classList.remove('active', 'done', 'error');
+  badge.classList.remove('idle', 'working', 'done', 'error');
+
+  if (status === 'working') {
+    item.classList.add('active');
+    badge.classList.add('working');
+    badge.textContent = '⏳ Working';
+  } else if (status === 'done') {
+    item.classList.add('done');
+    badge.classList.add('done');
+    badge.textContent = '✓ Done';
+  } else if (status === 'error') {
+    item.classList.add('error');
+    badge.classList.add('error');
+    badge.textContent = '✗ Error';
+  } else {
+    badge.classList.add('idle');
+    badge.textContent = '—';
   }
 
-  // Reset state
-  state.series = null;
-  state.blobs = [];
-  state.renderStatus = [];
-
-  showGenerationProgress();
-  setProgressBar(5);
-  setProgressStep('ps-script', 'active');
-  document.getElementById('step3Footer').style.display = 'none';
-  document.getElementById('videoList').classList.add('hidden');
-  document.getElementById('errorState').classList.add('hidden');
-
-  try {
-    // Phase 1: Generate scripts with Grok
-    const series = await generateVideoSeries({
-      apiKey: settings.apiKey,
-      model: settings.grokModel,
-      topic: topicInput.value.trim(),
-      audience: audienceInput.value.trim(),
-      videoCount: parseInt(videoCountSlider.value),
-      duration: parseInt(getToggleVal('videoDuration') || '30'),
-      style: getToggleVal('videoStyle') || 'educational',
-      language: 'en',
-      includeHashtags: getToggleVal('hashtagToggle') !== 'no',
-      onProgress: p => setProgressBar(5 + p * 0.6),
-    });
-
-    state.series = series;
-    state.blobs = new Array(series.videos.length).fill(null);
-    state.renderStatus = series.videos.map(() => 'queued');
-
-    setProgressBar(70);
-    setProgressStep('ps-script', 'done');
-    setProgressStep('ps-render', 'active');
-
-    // Phase 2: Render videos
-    buildVideoList(series);
-    document.getElementById('videoList').classList.remove('hidden');
-
-    const renderOpts = {
-      aspectRatio: '9:16',
-      theme: getToggleVal('colorTheme') || 'dark-purple',
-      animation: getToggleVal('textAnimation') || 'fade',
-      duration: parseInt(getToggleVal('videoDuration') || '30'),
-      quality: 'medium',
-    };
-
-    for (let i = 0; i < series.videos.length; i++) {
-      updateVideoCardStatus(i, 'rendering');
-      state.renderStatus[i] = 'rendering';
-
-      const blob = await renderVideo(series.videos[i], {
-        ...renderOpts,
-        videoIndex: i,
-        totalVideos: series.videos.length,
-        onProgress: p => {
-          const overallP = 70 + ((i + p / 100) / series.videos.length) * 25;
-          setProgressBar(overallP);
-        },
-      });
-
-      state.blobs[i] = blob;
-      state.renderStatus[i] = 'ready';
-      updateVideoCardStatus(i, 'ready');
-    }
-
-    setProgressBar(100);
-    setProgressStep('ps-render', 'done');
-    setProgressStep('ps-done', 'done');
-
-    // Show footer
-    document.getElementById('step3Footer').style.display = '';
-    document.getElementById('generateTitle').textContent = `${series.videos.length} videos ready!`;
-    document.getElementById('generateDesc').textContent =
-      `"${series.seriesTitle}" — click Export to download your videos.`;
-
-  } catch (err) {
-    showError(err.message);
-  }
+  if (subText && sub) sub.textContent = subText;
 }
 
-function setProgressBar(pct) {
+function setProgress(pct) {
   document.getElementById('progressBar').style.width = `${Math.min(100, pct)}%`;
 }
 
-function setProgressStep(id, state) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.classList.remove('active', 'done');
-  if (state === 'active') el.classList.add('active');
-  else if (state === 'done') el.classList.add('done');
-}
-
-function showGenerationProgress() {
-  document.getElementById('generateProgress').classList.remove('hidden');
-}
-
 function showError(msg) {
-  document.getElementById('generateProgress').classList.add('hidden');
   document.getElementById('errorState').classList.remove('hidden');
   document.getElementById('errorMsg').textContent = msg;
+  document.getElementById('phaseList').classList.add('hidden');
 }
 
-document.getElementById('retryBtn').addEventListener('click', () => {
-  goToStep(2);
-});
+// Scene thumbnail strip
+function addSceneThumb(videoIndex, scene) {
+  const strip = document.getElementById('sceneStrip');
+  const thumbs = document.getElementById('sceneThumbs');
+  strip.classList.remove('hidden');
 
-// --- Video card list ---
-function buildVideoList(series) {
-  const list = document.getElementById('videoList');
-  list.innerHTML = '';
+  const id = `thumb-v${videoIndex}-s${scene.index}`;
+  let el = document.getElementById(id);
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'scene-thumb loading';
+    el.id = id;
+    el.innerHTML = `<span class="scene-thumb-num">${videoIndex + 1}.${scene.index + 1}</span>`;
+    thumbs.appendChild(el);
+  }
 
-  series.videos.forEach((v, i) => {
-    const card = document.createElement('div');
-    card.className = 'video-card';
-    card.id = `vc-${i}`;
-    card.innerHTML = `
-      <div class="vc-header">
-        <div class="vc-number">${i + 1}</div>
-        <div class="vc-title">${v.title}</div>
-        <span class="vc-status queued" id="vcs-${i}">Queued</span>
-      </div>
-      <div class="vc-hook">${v.hook}</div>
-      <div class="vc-meta">
-        <span class="vc-tag">🎬 ${v.scenes.length} scenes</span>
-        <span class="vc-tag">📝 ${v.narration.split(' ').length} words</span>
-        ${v.hashtags.length ? `<span class="vc-tag">🏷 ${v.hashtags.length} hashtags</span>` : ''}
-      </div>
+  if (scene.imageDataUrl) {
+    el.classList.remove('loading');
+    el.innerHTML = `
+      <img src="${scene.imageDataUrl}" alt="scene" />
+      <span class="scene-thumb-num">${videoIndex + 1}.${scene.index + 1}</span>
     `;
-    list.appendChild(card);
-  });
+  }
 }
 
-function updateVideoCardStatus(idx, status) {
-  const badge = document.getElementById(`vcs-${idx}`);
-  const card = document.getElementById(`vc-${idx}`);
-  if (!badge || !card) return;
+async function startCreation() {
+  state.project = null;
+  state.blobs   = [];
 
-  badge.className = `vc-status ${status}`;
-  badge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
-  card.className = `video-card ${status}`;
+  // Reset UI
+  document.getElementById('errorState').classList.add('hidden');
+  document.getElementById('phaseList').classList.remove('hidden');
+  document.getElementById('sceneStrip').classList.add('hidden');
+  document.getElementById('sceneThumbs').innerHTML = '';
+  document.getElementById('step3Footer').classList.add('hidden');
+  setProgress(0);
+  setPhase('script', 'idle');
+  setPhase('images', 'idle');
+  setPhase('render', 'idle');
+
+  const format       = getToggle('formatCards') || 'single';
+  const episodeCount = parseInt(document.getElementById('episodeCount').value);
+  const sceneCount   = parseInt(document.getElementById('sceneCount').value);
+
+  try {
+    // ── Phase 1: Generate scripts ──
+    setPhase('script', 'working', 'Sending your story to Grok...');
+    document.getElementById('genTitle').textContent = 'Writing your script...';
+
+    const project = await generateScripts({
+      story:        storyInput.value.trim(),
+      format,
+      episodeCount,
+      sceneCount,
+      artStyle:     getToggle('artStyle')   || 'cinematic',
+      mood:         getToggle('moodStyle')  || 'dramatic',
+      shotType:     getToggle('shotType')   || 'varied',
+      onProgress:   p => setProgress(p * 0.3),
+    });
+
+    state.project = project;
+    setPhase('script', 'done',
+      `Script ready: ${project.videos.length} video${project.videos.length > 1 ? 's' : ''}, ${sceneCount} scenes each`
+    );
+    setProgress(30);
+
+    // ── Phase 2: Generate images via Grok Imagine ──
+    const totalScenes = project.videos.reduce((n, v) => n + v.scenes.length, 0);
+    setPhase('images', 'working', `Generating ${totalScenes} images via Grok Imagine...`);
+    document.getElementById('genTitle').textContent = 'Generating images...';
+    document.getElementById('genDesc').textContent  =
+      `Grok Imagine is creating ${totalScenes} scene images. The grok.com tab will update as each one is made.`;
+
+    // Add placeholder thumbs
+    project.videos.forEach((v, vi) => {
+      v.scenes.forEach(s => addSceneThumb(vi, s));
+    });
+
+    await generateAllImages(
+      project,
+      p => setProgress(30 + p * 0.45),
+      (vi, scene) => addSceneThumb(vi, scene)
+    );
+
+    setPhase('images', 'done', `${totalScenes} images generated`);
+    setProgress(75);
+
+    // ── Phase 3: Render videos ──
+    setPhase('render', 'working', 'Compositing images into video...');
+    document.getElementById('genTitle').textContent = 'Rendering videos...';
+    document.getElementById('genDesc').textContent  = 'Almost done — stitching images into video.';
+
+    const blobs = await renderProject(
+      project,
+      {
+        
+        transition:   getToggle('transition')   || 'crossfade',
+        quality:      'medium',
+      },
+      (vi) => setPhase('render', 'working', `Rendering video ${vi + 1}/${project.videos.length}...`),
+      (vi, p) => setProgress(75 + ((vi + p / 100) / project.videos.length) * 25),
+      (vi, blob) => { state.blobs[vi] = blob; }
+    );
+
+    state.blobs = blobs;
+    setPhase('render', 'done', `${blobs.length} video${blobs.length > 1 ? 's' : ''} ready to export`);
+    setProgress(100);
+
+    document.getElementById('genTitle').textContent =
+      `${blobs.length} video${blobs.length > 1 ? 's' : ''} ready!`;
+    document.getElementById('genDesc').textContent  =
+      project.seriesTitle
+        ? `"${project.seriesTitle}" — ${blobs.length} episodes rendered.`
+        : `"${project.videos[0]?.title}" — your video is ready to download.`;
+
+    document.getElementById('step3Footer').classList.remove('hidden');
+    chrome.runtime.sendMessage({ type: 'GENERATION_DONE' });
+
+  } catch (err) {
+    setPhase('script', 'error');
+    setPhase('images', 'error');
+    setPhase('render', 'error');
+    showError(err.message);
+    chrome.runtime.sendMessage({ type: 'GENERATION_ERROR' });
+  }
 }
 
+document.getElementById('retryBtn').addEventListener('click', () => goToStep(2));
 document.getElementById('step3Back').addEventListener('click', () => goToStep(2));
 document.getElementById('step3Next').addEventListener('click', () => {
   goToStep(4);
   buildExportPanel();
 });
 
-// -----------------------------------------------------------------------
+// ─────────────────────────────────────────────────────
 // Step 4: Export
-// -----------------------------------------------------------------------
+// ─────────────────────────────────────────────────────
 function buildExportPanel() {
-  if (!state.series) return;
+  const { project, blobs } = state;
+  if (!project) return;
 
-  const { series, blobs } = state;
-  const readyCount = blobs.filter(Boolean).length;
+  document.getElementById('exportDesc').textContent =
+    project.seriesTitle
+      ? `${project.seriesTitle} — ${blobs.length} videos ready`
+      : `${project.videos[0]?.title} — ready to download`;
 
-  document.getElementById('exportSummary').innerHTML =
-    `<strong>${series.seriesTitle}</strong><br>
-     ${series.description}<br><br>
-     ${readyCount} of ${series.videos.length} videos rendered and ready to download.`;
+  document.getElementById('exportAllSub').textContent =
+    `Save ${blobs.length} video${blobs.length > 1 ? 's' : ''} as .webm`;
 
-  // Build per-video download list
-  const list = document.getElementById('exportVideoList');
+  const list = document.getElementById('videoPreviewList');
   list.innerHTML = '';
-
-  series.videos.forEach((v, i) => {
-    const item = document.createElement('div');
-    item.className = 'export-item';
-    item.innerHTML = `
-      <input type="checkbox" id="ec-${i}" checked />
-      <label class="export-item-title" for="ec-${i}">${v.emoji} ${v.title}</label>
-      <button class="export-item-dl" data-idx="${i}" title="Download this video">⬇</button>
+  project.videos.forEach((v, i) => {
+    const firstImg = v.scenes.find(s => s.imageDataUrl)?.imageDataUrl;
+    const card = document.createElement('div');
+    card.className = 'video-preview-card';
+    card.innerHTML = `
+      <div class="vpc-thumb">
+        ${firstImg ? `<img src="${firstImg}" />` : ''}
+      </div>
+      <div class="vpc-info">
+        <div class="vpc-title">${v.episode ? `${v.episode}: ` : ''}${v.title}</div>
+        <div class="vpc-meta">${v.scenes.length} scenes · ${v.scenes.reduce((t, s) => t + (s.duration || 5), 0)}s</div>
+      </div>
+      <button class="vpc-dl" data-idx="${i}" title="Download">⬇</button>
     `;
-    list.appendChild(item);
+    list.appendChild(card);
   });
 
-  // Individual download
   list.addEventListener('click', e => {
     const btn = e.target.closest('[data-idx]');
-    if (!btn) return;
-    const idx = parseInt(btn.dataset.idx);
-    downloadVideo(idx);
+    if (btn) downloadVideo(+btn.dataset.idx);
   });
 }
 
 function downloadVideo(idx) {
-  const blob = state.blobs[idx];
-  if (!blob) return;
+  const blob  = state.blobs[idx];
+  const video = state.project?.videos[idx];
+  if (!blob || !video) return;
 
-  const title = state.series.videos[idx].title
-    .replace(/[^a-z0-9]/gi, '-')
-    .toLowerCase();
+  const slug = (video.episode || video.title)
+    .replace(/[^a-z0-9]/gi, '-').toLowerCase().slice(0, 40);
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
+  const a   = document.createElement('a');
   a.href = url;
-  a.download = `grok-video-${idx + 1}-${title}.webm`;
+  a.download = `grok-video-${idx + 1}-${slug}.webm`;
   a.click();
   URL.revokeObjectURL(url);
 }
 
-async function downloadAllAsZip() {
-  // Simple sequential download (no JSZip dependency needed for the extension)
+document.getElementById('exportAll').addEventListener('click', async () => {
   for (let i = 0; i < state.blobs.length; i++) {
-    if (state.blobs[i]) {
-      await new Promise(r => setTimeout(r, 300));
-      downloadVideo(i);
-    }
+    await sleep(350);
+    downloadVideo(i);
   }
-}
+});
 
-function downloadSelected() {
-  for (let i = 0; i < (state.series?.videos.length || 0); i++) {
-    const cb = document.getElementById(`ec-${i}`);
-    if (cb?.checked && state.blobs[i]) downloadVideo(i);
-  }
-}
-
-function copyAllScripts() {
-  if (!state.series) return;
-  const text = state.series.videos.map((v, i) =>
-    `=== Video ${i + 1}: ${v.title} ===\n` +
-    `Hook: ${v.hook}\n\n` +
-    `Scenes:\n${v.scenes.map((s, j) => `  ${j + 1}. ${s}`).join('\n')}\n\n` +
-    `Narration:\n${v.narration}\n\n` +
-    `CTA: ${v.callToAction}\n` +
-    (v.hashtags.length ? `Hashtags: ${v.hashtags.map(h => `#${h}`).join(' ')}\n` : '') +
-    '\n'
-  ).join('\n');
+document.getElementById('copyScripts').addEventListener('click', () => {
+  if (!state.project) return;
+  const text = state.project.videos.map((v, i) =>
+    `=== ${v.episode ? `${v.episode}: ` : ''}${v.title} ===\n\n` +
+    v.scenes.map((s, j) =>
+      `Scene ${j + 1} [${s.duration}s]\n` +
+      `  Narration: ${s.narration}\n` +
+      `  Image prompt: ${s.imagePrompt}`
+    ).join('\n\n') +
+    (v.hashtags.length ? `\n\nHashtags: ${v.hashtags.map(h => `#${h}`).join(' ')}\n` : '')
+  ).join('\n\n' + '─'.repeat(50) + '\n\n');
 
   navigator.clipboard.writeText(text).then(() => {
     const btn = document.getElementById('copyScripts');
     btn.querySelector('.eo-text strong').textContent = '✓ Copied!';
-    setTimeout(() => {
-      btn.querySelector('.eo-text strong').textContent = 'Copy Scripts';
-    }, 2000);
+    setTimeout(() => btn.querySelector('.eo-text strong').textContent = 'Copy Scripts', 2500);
   });
-}
+});
 
-document.getElementById('exportAll').addEventListener('click', downloadAllAsZip);
-document.getElementById('exportSelected').addEventListener('click', downloadSelected);
-document.getElementById('copyScripts').addEventListener('click', copyAllScripts);
 document.getElementById('step4Back').addEventListener('click', () => goToStep(3));
-document.getElementById('newSeriesBtn').addEventListener('click', () => {
-  state.series = null;
-  state.blobs = [];
-  state.renderStatus = [];
-  topicInput.value = '';
+document.getElementById('newVideoBtn').addEventListener('click', () => {
+  state.project = null;
+  state.blobs   = [];
+  storyInput.value = '';
   charCount.textContent = '0';
   document.getElementById('step1Next').disabled = true;
+  selectNiche('original');
   goToStep(1);
 });
 
-// -----------------------------------------------------------------------
-// Settings button
-// -----------------------------------------------------------------------
+// ─────────────────────────────────────────────────────
+// Settings + Grok banner
+// ─────────────────────────────────────────────────────
 document.getElementById('settingsBtn').addEventListener('click', () => {
   chrome.runtime.openOptionsPage();
 });
-
-document.getElementById('openSettings')?.addEventListener('click', () => {
-  chrome.runtime.openOptionsPage();
+document.getElementById('openGrokBtn')?.addEventListener('click', () => {
+  chrome.tabs.create({ url: 'https://grok.com' });
+  document.getElementById('noGrokBanner').classList.add('hidden');
 });
 
-// -----------------------------------------------------------------------
-// Initialization
-// -----------------------------------------------------------------------
+// ─────────────────────────────────────────────────────
+// Init
+// ─────────────────────────────────────────────────────
 async function init() {
-  const settings = await chrome.storage.sync.get({ apiKey: '', defaultVideoCount: 5, defaultDuration: 30, defaultStyle: 'educational', colorTheme: 'dark-purple' });
-  state.settings = settings;
-
-  // Show no-API banner if needed
-  if (!settings.apiKey) {
-    document.getElementById('noApiBanner').classList.remove('hidden');
+  // Check if Grok tab is open
+  const tabs = await chrome.tabs.query({ url: 'https://grok.com/*' });
+  if (tabs.length === 0) {
+    document.getElementById('noGrokBanner').classList.remove('hidden');
   }
 
-  // Apply saved defaults
-  videoCountSlider.value = settings.defaultVideoCount;
-  document.getElementById('videoCountVal').textContent = `${settings.defaultVideoCount} videos`;
-  setToggleVal('videoDuration', String(settings.defaultDuration));
-  setToggleVal('videoStyle', settings.defaultStyle);
-  setToggleVal('colorTheme', settings.colorTheme);
+  // Load saved defaults
+  const s = await chrome.storage.sync.get({
+    defaultStyle: 'cinematic', colorTheme: 'dark-purple',
+  });
+  setToggle('artStyle', s.defaultStyle);
+
+  // Pre-fill topic from context menu
+  const session = await chrome.storage.session.get({ pendingTopic: '' });
+  if (session.pendingTopic) {
+    storyInput.value = session.pendingTopic;
+    charCount.textContent = session.pendingTopic.length;
+    document.getElementById('step1Next').disabled = session.pendingTopic.length < 10;
+    chrome.storage.session.remove('pendingTopic');
+  }
 
   goToStep(1);
 }
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 init();
