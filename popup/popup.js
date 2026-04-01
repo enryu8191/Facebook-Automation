@@ -1,5 +1,6 @@
 import { generateScripts, generateAllImages } from '../utils/grok-api.js';
 import { renderProject } from '../utils/video-renderer.js';
+import { NICHES, getNicheById } from '../utils/niches.js';
 
 // ─────────────────────────────────────────────────────
 // State
@@ -89,6 +90,77 @@ document.getElementById('quickChips').addEventListener('click', e => {
 });
 
 document.getElementById('step1Next').addEventListener('click', () => goToStep(2));
+
+// ─────────────────────────────────────────────────────
+// Niche picker
+// ─────────────────────────────────────────────────────
+let activeNiche = 'original'; // default
+
+function selectNiche(id) {
+  activeNiche = id;
+  const niche = getNicheById(id);
+  if (!niche) return;
+
+  // Update card highlight + checkmarks
+  document.querySelectorAll('.niche-card').forEach(card => {
+    const isActive = card.dataset.niche === id;
+    card.classList.toggle('active', isActive);
+    const check = document.getElementById(`ncheck-${card.dataset.niche}`);
+    if (check) check.classList.toggle('hidden', !isActive);
+  });
+
+  if (id === 'original') {
+    // Show text input, hide preset preview
+    document.getElementById('storyInputGroup').classList.remove('hidden');
+    document.getElementById('presetPreview').classList.add('hidden');
+    storyInput.value = '';
+    charCount.textContent = '0';
+    document.getElementById('step1Next').disabled = true;
+  } else {
+    // Hide text input, show preset preview
+    document.getElementById('storyInputGroup').classList.add('hidden');
+    document.getElementById('presetPreview').classList.remove('hidden');
+    document.getElementById('presetPreviewText').textContent = niche.prompt;
+
+    // Auto-fill hidden textarea so generation picks it up
+    storyInput.value = niche.prompt;
+    charCount.textContent = niche.prompt.length;
+    document.getElementById('step1Next').disabled = false;
+
+    // Apply preset style defaults to Step 2
+    setToggle('artStyle',    niche.artStyle);
+    setToggle('mood',        niche.mood);
+    setToggle('shotType',    niche.shotType);
+    setToggle('transition',  niche.transition);
+    setToggle('captionStyle', niche.captionStyle);
+
+    // Scene count
+    const sceneSlider = document.getElementById('sceneCount');
+    sceneSlider.value = niche.sceneCount;
+    document.getElementById('sceneCountVal').textContent = `${niche.sceneCount} scenes`;
+
+    // Format
+    setToggle('formatCards', niche.format);
+    document.getElementById('seriesCountGroup')
+      .classList.toggle('hidden', niche.format !== 'series');
+  }
+}
+
+// Niche card clicks
+document.getElementById('nicheGrid').addEventListener('click', e => {
+  const card = e.target.closest('.niche-card');
+  if (card) selectNiche(card.dataset.niche);
+});
+
+// "Edit prompt" button — drop back to manual input with preset text pre-filled
+document.getElementById('presetEditBtn').addEventListener('click', () => {
+  document.getElementById('storyInputGroup').classList.remove('hidden');
+  document.getElementById('presetPreview').classList.add('hidden');
+  storyInput.focus();
+  const len = storyInput.value.length;
+  charCount.textContent = len;
+  document.getElementById('step1Next').disabled = len < 10;
+});
 
 // ─────────────────────────────────────────────────────
 // Step 2: Style
@@ -367,6 +439,7 @@ document.getElementById('newVideoBtn').addEventListener('click', () => {
   storyInput.value = '';
   charCount.textContent = '0';
   document.getElementById('step1Next').disabled = true;
+  selectNiche('original');
   goToStep(1);
 });
 

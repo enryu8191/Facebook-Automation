@@ -84,6 +84,138 @@ textarea:focus, input[type="text"]:focus {
 }
 .char-count { font-size: 11px; color: #475569; text-align: right; margin-top: -4px; }
 
+/* --- Niche grid --- */
+.niche-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.niche-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #13131a;
+  border: 2px solid #2a2a3e;
+  border-radius: 14px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s;
+  position: relative;
+  width: 100%;
+  font-family: inherit;
+  color: inherit;
+}
+
+.niche-card:hover {
+  border-color: #4c1d95;
+  background: rgba(124, 58, 237, 0.06);
+}
+
+.niche-card.active {
+  border-color: #7c3aed;
+  background: rgba(124, 58, 237, 0.1);
+}
+
+.nc-tag {
+  position: absolute;
+  top: 8px;
+  right: 36px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 20px;
+}
+
+.nc-tag.viral {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.nc-emoji {
+  font-size: 28px;
+  flex-shrink: 0;
+  width: 40px;
+  text-align: center;
+}
+
+.nc-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.nc-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f1f5f9;
+  margin-bottom: 2px;
+}
+
+.nc-desc {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.nc-check {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #7c3aed;
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Preset preview box */
+.preset-preview {
+  background: rgba(124, 58, 237, 0.07);
+  border: 1px solid rgba(124, 58, 237, 0.2);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pp-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #7c3aed;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.pp-text {
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.pp-edit-btn {
+  background: none;
+  border: none;
+  color: #7c3aed;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+  font-family: inherit;
+  text-decoration: underline;
+}
+
+.pp-edit-btn:hover { color: #a855f7; }
+
 /* --- Format cards --- */
 .format-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .format-card {

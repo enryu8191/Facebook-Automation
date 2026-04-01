@@ -43,14 +43,56 @@
          STEP 1: Story / Concept
     ================================================================ -->
     <div class="panel" id="panel-1">
-      <h2 class="panel-title">What's your video about?</h2>
-      <p class="panel-desc">Describe your story, idea, or topic. Grok will write the script and generate images for every scene.</p>
+      <h2 class="panel-title">Pick a niche or write your own</h2>
+      <p class="panel-desc">Choose a preset to get started instantly, or write your own idea below.</p>
 
-      <div class="form-group">
-        <label>Your story or idea</label>
-        <textarea id="storyInput" rows="4"
-          placeholder="e.g. &quot;A lone astronaut discovers an ancient signal on Mars&quot; or &quot;3 habits that changed my life&quot; or &quot;a lofi animated cat studying at midnight&quot;"></textarea>
+      <!-- Niche Cards -->
+      <div class="niche-grid" id="nicheGrid">
+
+        <button class="niche-card active" data-niche="original">
+          <div class="nc-emoji">✍️</div>
+          <div class="nc-body">
+            <div class="nc-name">Your Own Idea</div>
+            <div class="nc-desc">Write a custom story or topic</div>
+          </div>
+          <div class="nc-check" id="ncheck-original">✓</div>
+        </button>
+
+        <button class="niche-card" data-niche="skeleton">
+          <div class="nc-tag viral">🔥 Viral</div>
+          <div class="nc-emoji">💀</div>
+          <div class="nc-body">
+            <div class="nc-name">3D Skeleton</div>
+            <div class="nc-desc">Funny skeleton in everyday life</div>
+          </div>
+          <div class="nc-check hidden" id="ncheck-skeleton">✓</div>
+        </button>
+
+        <button class="niche-card" data-niche="food">
+          <div class="nc-tag viral">🔥 Viral</div>
+          <div class="nc-emoji">🍕</div>
+          <div class="nc-body">
+            <div class="nc-name">AI Food Characters</div>
+            <div class="nc-desc">Cute food with faces on adventures</div>
+          </div>
+          <div class="nc-check hidden" id="ncheck-food">✓</div>
+        </button>
+
+      </div>
+
+      <!-- Story input (hidden when a preset is selected, shown for Original) -->
+      <div class="form-group" id="storyInputGroup">
+        <label id="storyLabel">Your story or idea</label>
+        <textarea id="storyInput" rows="3"
+          placeholder="e.g. &quot;A lone astronaut discovers an ancient signal on Mars&quot;"></textarea>
         <span class="char-count"><span id="charCount">0</span>/500</span>
+      </div>
+
+      <!-- Preset preview (shown when skeleton / food selected) -->
+      <div class="preset-preview hidden" id="presetPreview">
+        <div class="pp-label">Using preset story:</div>
+        <div class="pp-text" id="presetPreviewText"></div>
+        <button class="pp-edit-btn" id="presetEditBtn">Edit prompt</button>
       </div>
 
       <!-- Series or single -->
