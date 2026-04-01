@@ -7,16 +7,17 @@
  *  - Image generation loops through scenes one at a time via content script
  */
 
-const GROK_URL = 'https://grok.com';
-let grokTabId  = null;
+const GROK_CHAT_URL    = 'https://grok.com';
+const GROK_IMAGINE_URL = 'https://grok.com/imagine';
+let grokChatTabId    = null;
+let grokImagineTabId = null;
 
 // ─────────────────────────────────────────────────────
 // Install
 // ─────────────────────────────────────────────────────
 chrome.runtime.onInstalled.addListener(({ reason }) => {
   if (reason === 'install') {
-    // Open grok.com on first install so user can log in
-    chrome.tabs.create({ url: GROK_URL });
+    chrome.tabs.create({ url: GROK_CHAT_URL });
   }
 
   chrome.contextMenus.create({
@@ -44,7 +45,12 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 // ─────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'BRIDGE_READY') {
-    if (sender.tab?.id) grokTabId = sender.tab.id;
+    const tabId = sender.tab?.id;
+    const url   = sender.tab?.url || '';
+    if (tabId) {
+      if (url.includes('/imagine')) grokImagineTabId = tabId;
+      else                          grokChatTabId    = tabId;
+    }
     return;
   }
 
@@ -52,7 +58,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     handlePrompt(msg.prompt, msg.expectImage ?? false)
       .then(result => sendResponse(result))
       .catch(err   => sendResponse({ error: err.message }));
-    return true; // keep channel open for async response
+    return true;
   }
 });
 
@@ -60,9 +66,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // Core: send a prompt to the Grok content script
 // ─────────────────────────────────────────────────────
 async function handlePrompt(prompt, expectImage) {
-  const tabId = await getOrCreateGrokTab();
+  // Route to the right tab: /imagine for images, chat for text
+  const targetUrl = expectImage ? GROK_IMAGINE_URL : GROK_CHAT_URL;
+  const tabId     = await getOrCreateTab(targetUrl, expectImage);
+
   await ensureContentScript(tabId);
-  await sleep(800);
+  await sleep(600);
 
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(
@@ -71,7 +80,8 @@ async function handlePrompt(prompt, expectImage) {
       (res) => {
         if (chrome.runtime.lastError) {
           return reject(new Error(
-            'Could not reach Grok. Make sure grok.com is open and you are logged in.'
+            `Could not reach ${expectImage ? 'grok.com/imagine' : 'grok.com'}. ` +
+            'Make sure you are logged in.'
           ));
         }
         if (res?.error) return reject(new Error(res.error));
@@ -82,32 +92,48 @@ async function handlePrompt(prompt, expectImage) {
 }
 
 // ─────────────────────────────────────────────────────
-// Tab management — NEVER activate the tab so popup stays open
+// Tab management — never activate so popup stays open
 // ─────────────────────────────────────────────────────
-async function getOrCreateGrokTab() {
-  // 1. Reuse cached tab if still valid
-  if (grokTabId != null) {
+async function getOrCreateTab(url, isImagine) {
+  const cachedId = isImagine ? grokImagineTabId : grokChatTabId;
+
+  // 1. Reuse cached tab
+  if (cachedId != null) {
     try {
-      const tab = await chrome.tabs.get(grokTabId);
-      if (tab?.url?.startsWith(GROK_URL)) return grokTabId;
+      const tab = await chrome.tabs.get(cachedId);
+      if (tab?.url?.startsWith(url)) {
+        if (isImagine) grokImagineTabId = cachedId;
+        else           grokChatTabId    = cachedId;
+        return cachedId;
+      }
     } catch {
-      grokTabId = null;
+      if (isImagine) grokImagineTabId = null;
+      else           grokChatTabId    = null;
     }
   }
 
-  // 2. Find any existing grok.com tab (don't activate it)
-  const tabs = await chrome.tabs.query({ url: 'https://grok.com/*' });
-  if (tabs.length > 0) {
-    grokTabId = tabs[0].id;
-    return grokTabId;
+  // 2. Find existing open tab
+  const pattern = isImagine ? 'https://grok.com/imagine*' : 'https://grok.com/*';
+  const tabs    = await chrome.tabs.query({ url: pattern });
+  // For chat, exclude /imagine tabs
+  const match   = tabs.find(t =>
+    isImagine
+      ? t.url.includes('/imagine')
+      : !t.url.includes('/imagine')
+  );
+  if (match) {
+    if (isImagine) grokImagineTabId = match.id;
+    else           grokChatTabId    = match.id;
+    return match.id;
   }
 
-  // 3. Open a new background tab (active: false keeps popup open)
-  const newTab = await chrome.tabs.create({ url: GROK_URL, active: false });
-  grokTabId = newTab.id;
+  // 3. Open new background tab (active:false keeps popup open)
+  const newTab = await chrome.tabs.create({ url, active: false });
   await waitForTabLoad(newTab.id);
-  await sleep(1500); // let Grok's JS fully initialise
-  return grokTabId;
+  await sleep(2000); // let Grok's React fully initialise
+  if (isImagine) grokImagineTabId = newTab.id;
+  else           grokChatTabId    = newTab.id;
+  return newTab.id;
 }
 
 function waitForTabLoad(tabId, timeout = 30_000) {
@@ -143,7 +169,8 @@ async function ensureContentScript(tabId) {
 }
 
 chrome.tabs.onRemoved.addListener(id => {
-  if (id === grokTabId) grokTabId = null;
+  if (id === grokChatTabId)    grokChatTabId    = null;
+  if (id === grokImagineTabId) grokImagineTabId = null;
 });
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
