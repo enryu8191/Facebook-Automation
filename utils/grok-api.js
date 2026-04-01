@@ -12,8 +12,7 @@
 /**
  * @typedef {Object} Scene
  * @property {number} index
- * @property {string} narration        Spoken narration text for this scene
- * @property {string} caption          Short on-screen caption (max 8 words)
+ * @property {string} narration        Scene description for creator reference
  * @property {string} imagePrompt      Prompt sent to Grok Imagine
  * @property {string} [imageDataUrl]   Base64 data URL once image is generated
  * @property {number} duration         Seconds this scene plays
@@ -148,10 +147,11 @@ Create ${numVideos === 1 ? 'a single short video' : `a ${numVideos}-episode shor
 ${isSeries ? 'Each episode should be a self-contained story beat that builds into a complete arc across all episodes.' : ''}
 
 For EACH video, write ${sceneCount} scenes. Each scene needs:
-- A narration line (what the viewer hears, 1-2 sentences)
-- A caption (max 8 words shown on screen)
-- An image_prompt (a vivid visual description for AI image generation, append this style: "${styleSuffix}")
+- A narration line (what the viewer hears, 1-2 sentences, for the creator's reference)
+- An imagePrompt (a vivid visual description for Grok Imagine — be very specific about characters, setting, action, style: "${styleSuffix}")
 - A duration in seconds (4-8s per scene)
+
+Note: there are NO on-screen captions — the video is purely visual images. The creator will add their own captions and audio later.
 
 Reply with ONLY valid JSON, no markdown, no explanation:
 
@@ -161,18 +161,15 @@ Reply with ONLY valid JSON, no markdown, no explanation:
   "videos": [
     {
       "title": "video title",
-      "hook": "opening hook text (shown before scene 1, max 10 words)",
       "episode": "${isSeries ? 'Episode 1' : ''}",
       "scenes": [
         {
           "index": 0,
-          "narration": "narration text for this scene",
-          "caption": "short on-screen caption",
-          "imagePrompt": "vivid image description, ${styleSuffix}",
+          "narration": "what happens in this scene (for creator reference)",
+          "imagePrompt": "detailed visual description for Grok Imagine, ${styleSuffix}",
           "duration": 5
         }
       ],
-      "outro": "closing CTA or final caption",
       "hashtags": ["tag1", "tag2", "tag3", "tag4", "tag5"]
     }
   ]
@@ -198,17 +195,14 @@ Reply with ONLY valid JSON, no markdown, no explanation:
 
   // Normalize
   project.videos = project.videos.map((v, vi) => ({
-    title:    v.title    || `Video ${vi + 1}`,
-    hook:     v.hook     || '',
-    episode:  v.episode  || '',
-    outro:    v.outro    || 'Follow for more',
+    title:    v.title   || `Video ${vi + 1}`,
+    episode:  v.episode || '',
     hashtags: Array.isArray(v.hashtags) ? v.hashtags : [],
     scenes:   (v.scenes || []).slice(0, sceneCount).map((s, si) => ({
-      index:       si,
-      narration:   s.narration   || '',
-      caption:     s.caption     || '',
-      imagePrompt: s.imagePrompt || `${story}, scene ${si + 1}, ${styleSuffix}`,
-      duration:    Number(s.duration) || 5,
+      index:        si,
+      narration:    s.narration   || '',
+      imagePrompt:  s.imagePrompt || `${story}, scene ${si + 1}, ${styleSuffix}`,
+      duration:     Number(s.duration) || 5,
       imageDataUrl: null,
     })),
   }));

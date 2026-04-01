@@ -132,7 +132,6 @@ function selectNiche(id) {
     setToggle('mood',        niche.mood);
     setToggle('shotType',    niche.shotType);
     setToggle('transition',  niche.transition);
-    setToggle('captionStyle', niche.captionStyle);
 
     // Scene count
     const sceneSlider = document.getElementById('sceneCount');
@@ -304,12 +303,12 @@ async function startCreation() {
     // ── Phase 3: Render videos ──
     setPhase('render', 'working', 'Compositing images into video...');
     document.getElementById('genTitle').textContent = 'Rendering videos...';
-    document.getElementById('genDesc').textContent  = 'Almost done — combining images, captions, and transitions.';
+    document.getElementById('genDesc').textContent  = 'Almost done — stitching images into video.';
 
     const blobs = await renderProject(
       project,
       {
-        captionStyle: getToggle('captionStyle') || 'subtitle',
+        
         transition:   getToggle('transition')   || 'crossfade',
         quality:      'medium',
       },
@@ -414,15 +413,12 @@ document.getElementById('copyScripts').addEventListener('click', () => {
   if (!state.project) return;
   const text = state.project.videos.map((v, i) =>
     `=== ${v.episode ? `${v.episode}: ` : ''}${v.title} ===\n\n` +
-    `Hook: ${v.hook}\n\n` +
     v.scenes.map((s, j) =>
       `Scene ${j + 1} [${s.duration}s]\n` +
-      `  Caption: ${s.caption}\n` +
       `  Narration: ${s.narration}\n` +
       `  Image prompt: ${s.imagePrompt}`
     ).join('\n\n') +
-    `\n\nOutro: ${v.outro}\n` +
-    (v.hashtags.length ? `Hashtags: ${v.hashtags.map(h => `#${h}`).join(' ')}\n` : '')
+    (v.hashtags.length ? `\n\nHashtags: ${v.hashtags.map(h => `#${h}`).join(' ')}\n` : '')
   ).join('\n\n' + '─'.repeat(50) + '\n\n');
 
   navigator.clipboard.writeText(text).then(() => {
