@@ -1,7 +1,10 @@
 /**
  * Background Service Worker
- * Manages the grok.com tab and relays GROK_PROMPT messages
- * from the popup to the content script.
+ *
+ * Key design decisions:
+ *  - grok.com tab is NEVER brought to focus (so popup stays open)
+ *  - Progress is written to chrome.storage.session so popup can read it
+ *  - Image generation loops through scenes one at a time via content script
  */
 
 const GROK_URL = 'https://grok.com';
@@ -12,6 +15,7 @@ let grokTabId  = null;
 // ─────────────────────────────────────────────────────
 chrome.runtime.onInstalled.addListener(({ reason }) => {
   if (reason === 'install') {
+    // Open grok.com on first install so user can log in
     chrome.tabs.create({ url: GROK_URL });
   }
 
@@ -36,7 +40,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 });
 
 // ─────────────────────────────────────────────────────
-// Message relay: popup → grok tab content script
+// Message handler
 // ─────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'BRIDGE_READY') {
@@ -46,18 +50,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === 'GROK_PROMPT') {
     handlePrompt(msg.prompt, msg.expectImage ?? false)
-      .then(sendResponse)
-      .catch(err => sendResponse({ error: err.message }));
-    return true; // async
+      .then(result => sendResponse(result))
+      .catch(err   => sendResponse({ error: err.message }));
+    return true; // keep channel open for async response
   }
 });
 
+// ─────────────────────────────────────────────────────
+// Core: send a prompt to the Grok content script
+// ─────────────────────────────────────────────────────
 async function handlePrompt(prompt, expectImage) {
   const tabId = await getOrCreateGrokTab();
-
-  // Ensure content script is running
   await ensureContentScript(tabId);
-  await sleep(600);
+  await sleep(800);
 
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(
@@ -66,7 +71,7 @@ async function handlePrompt(prompt, expectImage) {
       (res) => {
         if (chrome.runtime.lastError) {
           return reject(new Error(
-            'Cannot reach Grok tab. Open grok.com and log in, then try again.'
+            'Could not reach Grok. Make sure grok.com is open and you are logged in.'
           ));
         }
         if (res?.error) return reject(new Error(res.error));
@@ -77,65 +82,68 @@ async function handlePrompt(prompt, expectImage) {
 }
 
 // ─────────────────────────────────────────────────────
-// Tab management
+// Tab management — NEVER activate the tab so popup stays open
 // ─────────────────────────────────────────────────────
 async function getOrCreateGrokTab() {
-  // 1. Reuse cached tab
+  // 1. Reuse cached tab if still valid
   if (grokTabId != null) {
     try {
       const tab = await chrome.tabs.get(grokTabId);
-      if (tab?.url?.startsWith(GROK_URL)) {
-        await chrome.tabs.update(grokTabId, { active: true });
-        await chrome.windows.update(tab.windowId, { focused: true });
-        return grokTabId;
-      }
-    } catch { grokTabId = null; }
+      if (tab?.url?.startsWith(GROK_URL)) return grokTabId;
+    } catch {
+      grokTabId = null;
+    }
   }
 
-  // 2. Find existing grok.com tab
+  // 2. Find any existing grok.com tab (don't activate it)
   const tabs = await chrome.tabs.query({ url: 'https://grok.com/*' });
   if (tabs.length > 0) {
-    const tab = tabs[0];
-    await chrome.tabs.update(tab.id, { active: true });
-    await chrome.windows.update(tab.windowId, { focused: true });
-    grokTabId = tab.id;
-    return tab.id;
+    grokTabId = tabs[0].id;
+    return grokTabId;
   }
 
-  // 3. Open new tab and wait for load
-  const newTab = await chrome.tabs.create({ url: GROK_URL });
+  // 3. Open a new background tab (active: false keeps popup open)
+  const newTab = await chrome.tabs.create({ url: GROK_URL, active: false });
   grokTabId = newTab.id;
   await waitForTabLoad(newTab.id);
-  return newTab.id;
+  await sleep(1500); // let Grok's JS fully initialise
+  return grokTabId;
 }
 
-function waitForTabLoad(tabId, timeout = 25_000) {
+function waitForTabLoad(tabId, timeout = 30_000) {
   return new Promise(resolve => {
     const timer = setTimeout(resolve, timeout);
-    function listener(id, info) {
+    function onUpdated(id, info) {
       if (id === tabId && info.status === 'complete') {
         clearTimeout(timer);
-        chrome.tabs.onUpdated.removeListener(listener);
+        chrome.tabs.onUpdated.removeListener(onUpdated);
         resolve();
       }
     }
-    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.onUpdated.addListener(onUpdated);
   });
 }
 
 async function ensureContentScript(tabId) {
-  try {
-    await new Promise((resolve, reject) => {
-      chrome.tabs.sendMessage(tabId, { type: 'PING' }, res => {
-        chrome.runtime.lastError || !res?.pong ? reject() : resolve();
-      });
+  // Ping first
+  const alive = await new Promise(resolve => {
+    chrome.tabs.sendMessage(tabId, { type: 'PING' }, res => {
+      resolve(!chrome.runtime.lastError && res?.pong === true);
     });
-  } catch {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['content/grok-bridge.js'] });
-    await sleep(500);
+  });
+
+  if (!alive) {
+    // Inject manually (handles pre-existing tabs)
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content/grok-bridge.js'],
+    });
+    await sleep(800);
   }
 }
 
-chrome.tabs.onRemoved.addListener(id => { if (id === grokTabId) grokTabId = null; });
+chrome.tabs.onRemoved.addListener(id => {
+  if (id === grokTabId) grokTabId = null;
+});
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
