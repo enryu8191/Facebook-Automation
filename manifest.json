@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Grok Video Series Generator",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Generate TikTok-style short video series using Grok AI — no API key needed, just log into grok.com.",
   "permissions": [
     "storage",

@@ -72,70 +72,69 @@
   async function handleImagine(prompt) {
     showStatus('Finding Grok Imagine input...');
 
-    // Find the text input on grok.com/imagine
+    // Use the EXACT placeholder text visible in the UI: "Type to imagine"
     const input = await waitFor(() =>
+      document.querySelector('input[placeholder="Type to imagine"]') ||
+      document.querySelector('textarea[placeholder="Type to imagine"]') ||
+      document.querySelector('input[placeholder*="imagine" i]') ||
+      document.querySelector('textarea[placeholder*="imagine" i]') ||
+      document.querySelector('input[placeholder*="Imagine" i]') ||
       document.querySelector('input[placeholder]') ||
-      document.querySelector('input[type="text"]') ||
-      document.querySelector('textarea[placeholder]') ||
-      document.querySelector('textarea') ||
-      document.querySelector('[contenteditable="true"]')
-    ).catch(() => {
+      document.querySelector('textarea')
+    , 25_000).catch(() => {
       throw new Error(
-        'Could not find the input on grok.com/imagine. ' +
+        'Could not find the "Type to imagine" input on grok.com/imagine. ' +
         'Make sure you are logged in and the page is fully loaded.'
       );
     });
 
-    showStatus('Pasting prompt into Grok Imagine...');
+    showStatus('Typing prompt into Grok Imagine...');
     input.focus();
-    await sleep(200);
+    await sleep(300);
 
-    // Set value using native setter (works with React)
-    const proto  = window.HTMLInputElement.prototype;
-    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
-      || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+    // Set value — use native React setter so React sees the change
+    const inputProto    = window.HTMLInputElement.prototype;
+    const textareProto  = window.HTMLTextAreaElement.prototype;
+    const setter =
+      Object.getOwnPropertyDescriptor(inputProto,   'value')?.set ||
+      Object.getOwnPropertyDescriptor(textareProto, 'value')?.set;
 
     if (setter) {
       setter.call(input, prompt);
     } else {
       input.value = prompt;
     }
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    await sleep(300);
+    input.dispatchEvent(new Event('input',  { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await sleep(400);
 
-    // Find and click the generate / create button
-    showStatus('Clicking Generate...');
-    const btn = await waitFor(() => {
-      // Try specific patterns first
-      const specific = [
-        document.querySelector('button[aria-label*="Generate" i]'),
-        document.querySelector('button[aria-label*="Create" i]'),
-        document.querySelector('button[type="submit"]'),
-        // Enabled button near the input
-        [...document.querySelectorAll('button')].find(b =>
-          !b.disabled &&
-          (b.textContent.trim().toLowerCase().includes('create') ||
-           b.textContent.trim().toLowerCase().includes('generate') ||
-           b.textContent.trim().toLowerCase().includes('imagine')) &&
-          b.querySelector('svg') === null // avoid icon-only buttons
-        ),
-        // Fallback: any enabled button with SVG that isn't a clear/back button
-        [...document.querySelectorAll('button')].find(b =>
-          !b.disabled &&
-          b.querySelector('svg') &&
-          !b.closest('nav, header, [class*="sidebar"]')
-        ),
-      ];
-      return specific.find(Boolean) || null;
-    }).catch(() => null);
+    // Find the send arrow button (↑ icon, bottom-right of the input bar)
+    showStatus('Clicking send...');
+    const sendBtn = (
+      // Arrow / send button closest to the input
+      input.closest('form, div')?.querySelector('button[type="submit"]') ||
+      input.closest('form, div')?.querySelector('button:last-of-type') ||
+      document.querySelector('button[aria-label*="send" i]') ||
+      document.querySelector('button[aria-label*="submit" i]') ||
+      document.querySelector('button[type="submit"]') ||
+      // The arrow button is typically the last button in the input container
+      (() => {
+        const container = input.closest('[class*="input"], [class*="compose"], [class*="prompt"], form, footer, div');
+        if (container) {
+          const btns = [...container.querySelectorAll('button')].filter(b => !b.disabled);
+          return btns[btns.length - 1]; // last button = send arrow
+        }
+        return null;
+      })()
+    );
 
-    if (btn) {
-      btn.click();
+    if (sendBtn) {
+      sendBtn.click();
     } else {
-      // Fall back to Enter key
+      // Fall back to Enter key on the input
       input.dispatchEvent(new KeyboardEvent('keydown', {
         key: 'Enter', code: 'Enter', keyCode: 13,
-        bubbles: true, cancelable: true,
+        which: 13, bubbles: true, cancelable: true,
       }));
     }
 
